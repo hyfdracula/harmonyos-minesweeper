@@ -1,0 +1,313 @@
+/**
+ * GameController.ets —— 棋盘渲染与交互状态
+ *
+ * 坐标系：**设备像素**。unit = 每个逻辑单位的设备像素数 = 2 × 缩放档位 n。
+ * 取 n 为整数 → 素材一格（36 存储像素）被整数倍放大，最近邻不会糊。
+ *
+ * 布局完全照原版 MINESWEEPER.xml 的 CustomLayout：
+ *   窗口 = 棋盘 + 边框（左30 / 上30 / 右29 / 下32，逻辑单位）
+ *   状态条在下边框里，X 相对窗口中心，Y 相对窗口底边：
+ *     时钟图标 x=-90 y=-30 · 计时面板 x=-59 y=-26
+ *     雷数面板 x=+18 y=-26 · 雷图标   x=+64 y=-30
+ */
+
+import { MinesweeperEngine, Mark, GameState } from './MinesweeperEngine';
+import { SpriteAtlas } from './SpriteAtlas';
+import {
+  TILE, FRAME_GAP_L, FRAME_GAP_T, FRAME_GAP_R, FRAME_GAP_B,
+  gradientFrame, normalTileRect, pressedTileRect, RECT_FLAG, RECT_QUESTION, RECT_HILITE, RECT_MISFLAG,
+  RECT_SHADOW_U, RECT_SHADOW_L, RECT_COUNTER, digitRect, RECT_MINE, RECT_PANEL_MINE, RECT_CLOCK,
+  COLOR_OUTSIDE, COLOR_FLOOR, COLOR_SUNKEN,
+  STRIP_BAND, STRIP_CLOCK_SIZE, STRIP_PANEL_W, STRIP_PANEL_H, STRIP_GAP, stripMargin
+} from './Theme';
+
+/** 矩形（ArkTS 里对象字面量必须对应显式声明的类或接口） */
+interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export class GameController {
+  engine: MinesweeperEngine = new MinesweeperEngine();
+  atlas: SpriteAtlas = new SpriteAtlas();
+  context: CanvasRenderingContext2D | null = null;
+
+  /** 画布尺寸（设备像素） */
+  canvasW: number = 0;
+  canvasH: number = 0;
+
+  /** 每个逻辑单位的设备像素数 = 2 × 缩放档位 */
+  unit: number = 2;
+  /** 缩放档位 n（1..8） */
+  scaleIndex: number = 1;
+
+  /** 窗口（底板）矩形，设备像素 */
+  frameX: number = 0;
+  frameY: number = 0;
+  frameW: number = 0;
+  frameH: number = 0;
+  /** 棋盘矩形，设备像素 */
+  boardX: number = 0;
+  boardY: number = 0;
+  tile: number = 36;
+
+  /** 计时（秒） */
+  seconds: number = 0;
+  timerHandle: number = -1;
+
+  /** 悬停格（鼠标用，触屏暂用按下态） */
+  hoverIndex: number = -1;
+
+  startNewGame(rows: number, cols: number, mines: number): void {
+    this.engine.reset(rows, cols, mines);
+    this.seconds = 0;
+    this.stopTimer();
+    this.layout();
+    this.draw();
+  }
+
+  /** 画布就绪 / 尺寸变化 */
+  attach(ctx: CanvasRenderingContext2D, widthVp: number, heightVp: number, density: number): void {
+    this.context = ctx;
+    this.canvasW = Math.max(1, Math.round(widthVp * density));
+    this.canvasH = Math.max(1, Math.round(heightVp * density));
+    this.layout();
+    this.draw();
+  }
+
+  /** 按当前画布尺寸重算缩放档位与各矩形 */
+  layout(): void {
+    const e = this.engine;
+    if (e.rowCount <= 0 || e.colCount <= 0 || this.canvasW <= 0) {
+      return;
+    }
+    // 选一个整盘放得下的最大档位
+    let best = 1;
+    for (let n = 1; n <= 8; n++) {
+      const u = 2 * n;
+      const fw = e.colCount * TILE * u + (FRAME_GAP_L + FRAME_GAP_R) * u;
+      const fh = e.rowCount * TILE * u + (FRAME_GAP_T + FRAME_GAP_B) * u;
+      if (fw <= this.canvasW && fh <= this.canvasH) {
+        best = n;
+      } else {
+        break;
+      }
+    }
+    this.scaleIndex = best;
+    this.unit = 2 * best;
+    this.tile = TILE * this.unit;
+
+    const boardW = e.colCount * this.tile;
+    const boardH = e.rowCount * this.tile;
+    this.frameW = boardW + (FRAME_GAP_L + FRAME_GAP_R) * this.unit;
+    this.frameH = boardH + (FRAME_GAP_T + FRAME_GAP_B) * this.unit;
+    this.frameX = Math.round((this.canvasW - this.frameW) / 2);
+    this.frameY = Math.round((this.canvasH - this.frameH) / 2);
+    this.boardX = this.frameX + FRAME_GAP_L * this.unit;
+    this.boardY = this.frameY + FRAME_GAP_T * this.unit;
+  }
+
+  // ------------------------------------------------------------------ 绘制
+
+  draw(): void {
+    const ctx = this.context;
+    if (ctx === null) {
+      return;
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.canvasW, this.canvasH);
+    this.drawBoardArea(ctx);
+    this.drawBoard(ctx);
+    this.drawStatusStrip(ctx);
+  }
+
+  /**
+   * 棋盘区：白色地板 + 左/右/下三边的凹槽线。
+   *
+   * 原版这层是窗口底图（Frame.bmp）里的一块白色凹陷区域，手机上不画那圈
+   * 玻璃边框，只保留地板和凹槽线——实测色值见 Theme.ets。
+   */
+  private drawBoardArea(ctx: CanvasRenderingContext2D): void {
+    const e = this.engine;
+    if (e.rowCount <= 0 || e.colCount <= 0) {
+      return;
+    }
+    ctx.fillStyle = COLOR_OUTSIDE;
+    ctx.fillRect(0, 0, this.canvasW, this.canvasH);
+
+    const x = this.boardX;
+    const y = this.boardY;
+    const w = e.colCount * this.tile;
+    const h = e.rowCount * this.tile;
+
+    ctx.fillStyle = COLOR_FLOOR;
+    ctx.fillRect(x, y, w, h);
+
+    // 凹槽线：左、右、下三边各 1 像素（原版上边是渐变，没有硬线）
+    ctx.fillStyle = COLOR_SUNKEN;
+    ctx.fillRect(x - 1, y, 1, h + 1);
+    ctx.fillRect(x + w, y, 1, h + 1);
+    ctx.fillRect(x - 1, y + h, w + 2, 1);
+  }
+
+  /** 棋盘 */
+  private drawBoard(ctx: CanvasRenderingContext2D): void {
+    const e = this.engine;
+    const u = this.unit;
+    const tile = this.tile;
+    for (let r = 0; r < e.rowCount; r++) {
+      for (let c = 0; c < e.colCount; c++) {
+        const cell = e.cellAt(r, c);
+        const x = this.boardX + c * tile;
+        const y = this.boardY + r * tile;
+        const idx = r * e.colCount + c;
+
+        if (cell.revealed) {
+          // 地板 = 该格的「按下态」渐变砖块（浅灰），再叠上凸起格子投下来的黑边
+          const frame = gradientFrame(r, c, e.rowCount, e.colCount);
+          this.atlas.drawLogical(ctx, this.atlas.boardSheet, pressedTileRect(frame), x, y, u);
+
+          // 阴影：上方（或首行）和左方（或首列）有凸起格子时，画黑边
+          const upRaised = r === 0 || !e.cellAt(r - 1, c).revealed;
+          const leftRaised = c === 0 || !e.cellAt(r, c - 1).revealed;
+          const shadowT = 3 * u;
+          if (upRaised) {
+            this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_SHADOW_U, x, y, u);
+          }
+          if (leftRaised) {
+            if (upRaised) {
+              // 角落不重复加深：从黑边下方开始画
+              this.atlas.drawLogical(ctx, this.atlas.boardSheet, [1012, 3, 3, 15], x, y + shadowT, u);
+            } else {
+              this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_SHADOW_L, x, y, u);
+            }
+          }
+
+          if (cell.exploded) {
+            this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_MINE, x, y, u);
+          } else if (cell.misflagged) {
+            this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_FLAG, x, y, u);
+            this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_MISFLAG, x, y, u);
+          } else if (cell.adjacent > 0) {
+            this.atlas.drawLogical(ctx, this.atlas.boardSheet, digitRect(cell.adjacent), x, y, u);
+          }
+        } else {
+          const frame = gradientFrame(r, c, e.rowCount, e.colCount);
+          this.atlas.drawLogical(ctx, this.atlas.boardSheet, normalTileRect(frame), x, y, u);
+          if (cell.mine) {
+            // 失败时亮出的雷
+            this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_MINE, x, y, u);
+          }
+          if (cell.mark === Mark.Flag) {
+            this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_FLAG, x, y, u);
+          } else if (cell.mark === Mark.Question) {
+            this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_QUESTION, x, y, u);
+          }
+          if (idx === this.hoverIndex) {
+            this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_HILITE, x, y, u);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * 底部状态条：时钟+计时在左，雷数+雷图标在右，中间大片留空。
+   * 位置按原版反推：两组分别贴着棋盘的左右沿，留白随棋盘宽度缩放。
+   */
+  private drawStatusStrip(ctx: CanvasRenderingContext2D): void {
+    const u = this.unit;
+    const e = this.engine;
+    const boardBottom = this.boardY + e.rowCount * this.tile;
+    const boardRight = this.boardX + e.colCount * this.tile;
+    const margin = stripMargin(e.colCount) * u;
+
+    const clockX = this.boardX + margin;
+    const clockY = boardBottom + Math.round((STRIP_BAND - STRIP_CLOCK_SIZE) / 2) * u;
+    const timeX = clockX + (STRIP_CLOCK_SIZE + STRIP_GAP) * u;
+    const timeY = boardBottom + Math.round((STRIP_BAND - STRIP_PANEL_H) / 2) * u;
+
+    const iconX = boardRight - margin - STRIP_CLOCK_SIZE * u;
+    const iconY = clockY;
+    const mineX = iconX - (STRIP_GAP + STRIP_PANEL_W) * u;
+    const mineY = timeY;
+
+    this.atlas.drawLogical(ctx, this.atlas.otherSheet, RECT_CLOCK, clockX, clockY, u);
+    this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, timeX, timeY, u);
+    this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, mineX, mineY, u);
+    this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_PANEL_MINE, iconX, iconY, u);
+
+    ctx.font = `bold ${12 * u}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(`${this.seconds}`, timeX + STRIP_PANEL_W * u / 2, timeY + STRIP_PANEL_H * u / 2);
+    ctx.fillText(`${e.minesRemaining()}`, mineX + STRIP_PANEL_W * u / 2, mineY + STRIP_PANEL_H * u / 2);
+  }
+
+  // ------------------------------------------------------------------ 交互
+
+  /** 设备像素坐标 → 格子索引，-1 表示不在棋盘上 */
+  hitTest(px: number, py: number): number {
+    const e = this.engine;
+    const c = Math.floor((px - this.boardX) / this.tile);
+    const r = Math.floor((py - this.boardY) / this.tile);
+    if (r < 0 || r >= e.rowCount || c < 0 || c >= e.colCount) {
+      return -1;
+    }
+    return r * e.colCount + c;
+  }
+
+  /** 点一格：开格 */
+  tap(px: number, py: number): void {
+    const idx = this.hitTest(px, py);
+    if (idx < 0) {
+      return;
+    }
+    const e = this.engine;
+    const r = Math.floor(idx / e.colCount);
+    const c = idx - r * e.colCount;
+    const wasReady = e.gameState === GameState.Ready;
+    e.reveal(r, c);
+    if (wasReady && e.gameState === GameState.Playing) {
+      this.startTimer();
+    }
+    this.draw();
+  }
+
+  /** 长按一格：标记循环 */
+  longPress(px: number, py: number): void {
+    const idx = this.hitTest(px, py);
+    if (idx < 0) {
+      return;
+    }
+    const e = this.engine;
+    const r = Math.floor(idx / e.colCount);
+    const c = idx - r * e.colCount;
+    e.toggleMark(r, c);
+    this.draw();
+  }
+
+  // ------------------------------------------------------------------ 计时
+
+  private startTimer(): void {
+    if (this.timerHandle !== -1) {
+      return;
+    }
+    this.timerHandle = setInterval(() => {
+      if (this.seconds < 999) {
+        this.seconds++;
+      }
+      this.draw();
+    }, 1000);
+  }
+
+  private stopTimer(): void {
+    if (this.timerHandle !== -1) {
+      clearInterval(this.timerHandle);
+      this.timerHandle = -1;
+    }
+  }
+}
