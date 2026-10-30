@@ -33,6 +33,8 @@ export struct MinefieldCanvas {
 
   private settings: RenderingContextSettings = new RenderingContextSettings(true);
   private context: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings);
+  /** 实际用来绘图的上下文（API 26 的 onReady 给的是 DrawingRenderingContext，要桥接） */
+  private drawCtx: CanvasRenderingContext2D | null = null;
   private areaW: number = 0;
   private areaH: number = 0;
   private density: number = 2.625;
@@ -57,11 +59,11 @@ export struct MinefieldCanvas {
     this.clearLongPress();
   }
 
-  private tryAttach(ctx: CanvasRenderingContext2D): void {
-    if (!this.ctxReady || this.areaW <= 0 || this.areaH <= 0) {
+  private tryAttach(): void {
+    if (!this.ctxReady || this.drawCtx === null || this.areaW <= 0 || this.areaH <= 0) {
       return;
     }
-    this.controller.attach(ctx, this.areaW, this.areaH, this.density);
+    this.controller.attach(this.drawCtx, this.areaW, this.areaH, this.density);
   }
 
   private clearLongPress(): void {
@@ -77,17 +79,22 @@ export struct MinefieldCanvas {
       .height('100%')
       .onReady((drawingCtx: DrawingRenderingContext) => {
         // API 26 起 onReady 给的是新的 DrawingRenderingContext，
-        // 要用 getContext2DFromDrawingContext 桥接回经典的 2D 绘图上下文
-        const ctx = CanvasRenderingContext2D.getContext2DFromDrawingContext(drawingCtx);
-        this.areaW = drawingCtx.size.width;
-        this.areaH = drawingCtx.size.height;
+        // 用 getContext2DFromDrawingContext 桥接回经典的 2D 绘图上下文。
+        // 桥接出来的对象与该 Canvas 组件绑定，绘制会落到同一个画布上。
+        this.drawCtx = CanvasRenderingContext2D.getContext2DFromDrawingContext(drawingCtx);
+        if (this.areaW <= 0 || this.areaH <= 0) {
+          // 兜底：onAreaChange 还没回调时，用画布自己的尺寸（默认单位 vp）
+          this.areaW = drawingCtx.size.width;
+          this.areaH = drawingCtx.size.height;
+        }
         this.ctxReady = true;
-        this.tryAttach(ctx);
+        this.tryAttach();
       })
       .onAreaChange((oldArea: Area, newArea: Area) => {
+        // 组件尺寸单位是 vp，换算成设备像素由 GameController 处理
         this.areaW = lengthToNumber(newArea.width);
         this.areaH = lengthToNumber(newArea.height);
-        this.tryAttach(this.context);
+        this.tryAttach();
       })
       .onTouch((event: TouchEvent) => {
         if (event.changedTouches.length === 0) {

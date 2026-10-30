@@ -4,11 +4,11 @@
  * 坐标系：**设备像素**。unit = 每个逻辑单位的设备像素数 = 2 × 缩放档位 n。
  * 取 n 为整数 → 素材一格（36 存储像素）被整数倍放大，最近邻不会糊。
  *
- * 布局完全照原版 MINESWEEPER.xml 的 CustomLayout：
- *   窗口 = 棋盘 + 边框（左30 / 上30 / 右29 / 下32，逻辑单位）
- *   状态条在下边框里，X 相对窗口中心，Y 相对窗口底边：
- *     时钟图标 x=-90 y=-30 · 计时面板 x=-59 y=-26
- *     雷数面板 x=+18 y=-26 · 雷图标   x=+64 y=-30
+ * 布局（2026-10-30 实测修订，见 docs/SPEC.md §5.4–§5.6）：
+ *   棋盘区 = 白色地板 + 左/右/下三边 1px 凹槽线（原版的玻璃窗口边框不上手机）
+ *   翻开的格子 = 该格的「按下态」浅灰砖块 + 凸起邻居投下来的黑边
+ *   底部状态条 = [时钟][计时面板] …… [雷数面板][雷图标]，两端展开
+ *   两组离棋盘左右沿的距离 margin = max(0, (cols - 12.5) × 18 / 7)
  */
 
 import { MinesweeperEngine, Mark, GameState } from './MinesweeperEngine';
@@ -20,14 +20,6 @@ import {
   COLOR_OUTSIDE, COLOR_FLOOR, COLOR_SUNKEN,
   STRIP_BAND, STRIP_CLOCK_SIZE, STRIP_PANEL_W, STRIP_PANEL_H, STRIP_GAP, stripMargin
 } from './Theme';
-
-/** 矩形（ArkTS 里对象字面量必须对应显式声明的类或接口） */
-interface Rect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
 
 export class GameController {
   engine: MinesweeperEngine = new MinesweeperEngine();
@@ -274,6 +266,7 @@ export class GameController {
     if (wasReady && e.gameState === GameState.Playing) {
       this.startTimer();
     }
+    this.syncTimerWithState();
     this.draw();
   }
 
@@ -287,7 +280,16 @@ export class GameController {
     const r = Math.floor(idx / e.colCount);
     const c = idx - r * e.colCount;
     e.toggleMark(r, c);
+    this.syncTimerWithState();
     this.draw();
+  }
+
+  /** 胜负已定就停表，别让计时器在终局后继续跳 */
+  private syncTimerWithState(): void {
+    const s = this.engine.gameState;
+    if (s === GameState.Won || s === GameState.Lost) {
+      this.stopTimer();
+    }
   }
 
   // ------------------------------------------------------------------ 计时
