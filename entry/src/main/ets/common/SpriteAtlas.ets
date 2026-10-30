@@ -29,6 +29,14 @@ export class SpriteAtlas {
   /** 是否已经加载过（页面重建时不必重复读资源） */
   loaded: boolean = false;
 
+  /**
+   * 设备像素 → 画布坐标的换算系数（= 1 / densityPixels）。
+   *
+   * Canvas 的绘制坐标系单位是 **vp**，而本工程内部一律按**设备像素**算
+   * （格边必须落在整数设备像素上才有像素级效果），所以送进 Canvas 前要换算。
+   */
+  pxScale: number = 1;
+
   async load(ctx: common.UIAbilityContext): Promise<void> {
     if (this.loaded) {
       return;
@@ -37,13 +45,17 @@ export class SpriteAtlas {
     this.gameSheet = await SpriteAtlas.loadPixelMap(ctx, 'minesweeperSheet.png');
     this.otherSheet = await SpriteAtlas.loadPixelMap(ctx, 'otherSheet.png');
     this.loaded = true;
+    console.info('[SpriteAtlas] 图集加载完成 board=' + (this.boardSheet !== null) +
+      ' game=' + (this.gameSheet !== null) + ' other=' + (this.otherSheet !== null));
   }
 
   private static async loadPixelMap(ctx: common.UIAbilityContext, name: string): Promise<image.PixelMap | null> {
     try {
       const bytes: Uint8Array = await ctx.resourceManager.getRawFileContent(name);
+      console.info('[SpriteAtlas] ' + name + ' 读到 ' + bytes.length + ' 字节');
       const source = image.createImageSource(bytes.buffer);
       if (source === null) {
+        console.error('[SpriteAtlas] ' + name + ' createImageSource 返回空');
         return null;
       }
       const pixelMap = await source.createPixelMap();
@@ -57,19 +69,25 @@ export class SpriteAtlas {
 
   /**
    * 从图集裁一块画出来。
+   *
+   * 单位陷阱（实测）：Canvas 坐标单位是 **vp**；而且 **PixelMap 源的裁剪矩形
+   * (sx,sy,sw,sh) 在 API 18 起默认单位也是 vp**（更早才是 px）。
+   * 所以源矩形和目标矩形都要乘 pxScale 换算，否则会从图集里裁到错的区域。
+   *
    * @param srcRect 逻辑坐标 [x, y, w, h]，取源像素时自动乘 SPRITE_SCALE
-   * @param dx,dy,dw,dh 目标矩形（设备像素）
+   * @param dx,dy,dw,dh 目标矩形（**设备像素**，内部会换算成 vp）
    */
   draw(ctx: CanvasRenderingContext2D, sheet: image.PixelMap | null,
     srcRect: number[], dx: number, dy: number, dw: number, dh: number): void {
     if (sheet === null) {
       return;
     }
-    const sx = srcRect[0] * SPRITE_SCALE;
-    const sy = srcRect[1] * SPRITE_SCALE;
-    const sw = srcRect[2] * SPRITE_SCALE;
-    const sh = srcRect[3] * SPRITE_SCALE;
-    ctx.drawImage(sheet, sx, sy, sw, sh, dx, dy, dw, dh);
+    const s = this.pxScale;
+    const sx = srcRect[0] * SPRITE_SCALE * s;
+    const sy = srcRect[1] * SPRITE_SCALE * s;
+    const sw = srcRect[2] * SPRITE_SCALE * s;
+    const sh = srcRect[3] * SPRITE_SCALE * s;
+    ctx.drawImage(sheet, sx, sy, sw, sh, dx * s, dy * s, dw * s, dh * s);
   }
 
   /**

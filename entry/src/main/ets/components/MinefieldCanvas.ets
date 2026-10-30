@@ -69,6 +69,8 @@ export struct MinefieldCanvas {
         // 页面重建（折叠/旋转）：接着原局继续
         this.controller.resume();
       }
+    }).catch((err: Error) => {
+      console.error('[MinefieldCanvas] 图集加载失败: ' + err.message);
     });
   }
 
@@ -95,15 +97,18 @@ export struct MinefieldCanvas {
     Canvas(this.context)
       .width('100%')
       .height('100%')
-      .onReady((drawingCtx: DrawingRenderingContext) => {
-        // API 26 起 onReady 给的是新的 DrawingRenderingContext，
-        // 用 getContext2DFromDrawingContext 桥接回经典的 2D 绘图上下文。
-        // 桥接出来的对象与该 Canvas 组件绑定，绘制会落到同一个画布上。
-        this.drawCtx = CanvasRenderingContext2D.getContext2DFromDrawingContext(drawingCtx);
+      .onReady((readyCtx: DrawingRenderingContext) => {
+        // 坑：API 26 的类型声明说 onReady 的参数是 DrawingRenderingContext，
+        // 但运行时给的其实是「构造 Canvas 时传进去的那个上下文对象」。
+        // 本工程构造时传的是 CanvasRenderingContext2D，所以再调
+        // getContext2DFromDrawingContext 会抛
+        // "param is not a DrawingRenderingContext object" → 未捕获异常 → 应用被杀。
+        // 所以这里直接用构造时的那个上下文。
+        this.drawCtx = this.context;
         if (this.areaW <= 0 || this.areaH <= 0) {
           // 兜底：onAreaChange 还没回调时，用画布自己的尺寸（默认单位 vp）
-          this.areaW = drawingCtx.size.width;
-          this.areaH = drawingCtx.size.height;
+          this.areaW = this.context.width;
+          this.areaH = this.context.height;
         }
         this.ctxReady = true;
         this.tryAttach();

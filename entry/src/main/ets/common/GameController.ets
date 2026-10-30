@@ -36,6 +36,9 @@ export interface DifficultyConfig {
   name: string;
 }
 
+/** 临时标定开关：true 时只画标定图，用来测 Canvas 的坐标单位 */
+const CALIBRATE: boolean = false;
+
 export class GameController {
   engine: MinesweeperEngine = new MinesweeperEngine();
   atlas: SpriteAtlas = new SpriteAtlas();
@@ -49,6 +52,12 @@ export class GameController {
   unit: number = 2;
   /** 缩放档位 n（1..8） */
   scaleIndex: number = 1;
+
+  /**
+   * 设备像素 → Canvas 坐标（vp）的换算系数 = 1 / densityPixels。
+   * Canvas 的坐标系单位是 vp，本工程内部按设备像素算，绘制时统一换算。
+   */
+  private pxScale: number = 1;
 
   /** 窗口（底板）矩形，设备像素 */
   frameX: number = 0;
@@ -111,8 +120,15 @@ export class GameController {
     this.context = ctx;
     this.canvasW = Math.max(1, Math.round(widthVp * density));
     this.canvasH = Math.max(1, Math.round(heightVp * density));
+    this.pxScale = 1 / density;
+    this.atlas.pxScale = this.pxScale;
     this.layout();
     this.draw();
+  }
+
+  /** 设备像素 → Canvas 坐标（vp） */
+  private v(px: number): number {
+    return px * this.pxScale;
   }
 
   /** 按当前画布尺寸重算缩放档位与各矩形 */
@@ -145,6 +161,9 @@ export class GameController {
     this.frameY = Math.round((this.canvasH - this.frameH) / 2);
     this.boardX = this.frameX + FRAME_GAP_L * this.unit;
     this.boardY = this.frameY + FRAME_GAP_T * this.unit;
+    console.info('[GameController] 布局 画布=' + this.canvasW + 'x' + this.canvasH + 'px 密度换算=' +
+      this.pxScale.toFixed(4) + ' 档位n=' + best + ' unit=' + this.unit +
+      ' 格边=' + this.tile + 'px 棋盘原点=(' + this.boardX + ',' + this.boardY + ')');
   }
 
   // ------------------------------------------------------------------ 绘制
@@ -154,11 +173,36 @@ export class GameController {
     if (ctx === null) {
       return;
     }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, this.canvasW, this.canvasH);
-    this.drawBoardArea(ctx);
-    this.drawBoard(ctx);
-    this.drawStatusStrip(ctx);
+    try {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, this.v(this.canvasW), this.v(this.canvasH));
+      if (CALIBRATE) {
+        this.drawCalibration(ctx);
+        return;
+      }
+      this.drawBoardArea(ctx);
+      this.drawBoard(ctx);
+      this.drawStatusStrip(ctx);
+    } catch (err) {
+      console.error('[GameController] 绘制失败: ' + (err as Error).message);
+    }
+  }
+
+  /**
+   * 临时标定图（CALIBRATE=true 时启用）：
+   * 红 = 100 单位、绿 = 275 单位、两者都按 vp 语义写在坐标里；
+   * 若画布吃 vp，红块应是 275 设备像素、绿块 756；若吃 px，则红 100、绿 275。
+   */
+  private drawCalibration(ctx: CanvasRenderingContext2D): void {
+    ctx.fillStyle = '#ff0000';
+    ctx.fillRect(0, 0, 100, 100);
+    ctx.fillStyle = '#00ff00';
+    ctx.fillRect(200, 0, 275, 275);
+    ctx.fillStyle = '#0000ff';
+    ctx.fillRect(600, 0, 100, 100);
+    // 同一个时钟图标分别画成 100 单位和 275 单位
+    this.atlas.draw(ctx, this.atlas.otherSheet, RECT_CLOCK, 0, 300, 100, 100);
+    this.atlas.draw(ctx, this.atlas.otherSheet, RECT_CLOCK, 200, 300, 275, 275);
   }
 
   /**
@@ -173,7 +217,7 @@ export class GameController {
       return;
     }
     ctx.fillStyle = COLOR_OUTSIDE;
-    ctx.fillRect(0, 0, this.canvasW, this.canvasH);
+    ctx.fillRect(0, 0, this.v(this.canvasW), this.v(this.canvasH));
 
     const x = this.boardX;
     const y = this.boardY;
@@ -181,13 +225,13 @@ export class GameController {
     const h = e.rowCount * this.tile;
 
     ctx.fillStyle = COLOR_FLOOR;
-    ctx.fillRect(x, y, w, h);
+    ctx.fillRect(this.v(x), this.v(y), this.v(w), this.v(h));
 
     // 凹槽线：左、右、下三边各 1 像素（原版上边是渐变，没有硬线）
     ctx.fillStyle = COLOR_SUNKEN;
-    ctx.fillRect(x - 1, y, 1, h + 1);
-    ctx.fillRect(x + w, y, 1, h + 1);
-    ctx.fillRect(x - 1, y + h, w + 2, 1);
+    ctx.fillRect(this.v(x - 1), this.v(y), this.v(1), this.v(h + 1));
+    ctx.fillRect(this.v(x + w), this.v(y), this.v(1), this.v(h + 1));
+    ctx.fillRect(this.v(x - 1), this.v(y + h), this.v(w + 2), this.v(1));
   }
 
   /** 棋盘 */
@@ -281,12 +325,12 @@ export class GameController {
     this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, mineX, mineY, u);
     this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_PANEL_MINE, iconX, iconY, u);
 
-    ctx.font = `bold ${12 * u}px sans-serif`;
+    ctx.font = `bold ${this.v(12 * u)}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#ffffff';
-    ctx.fillText(`${this.seconds}`, timeX + STRIP_PANEL_W * u / 2, timeY + STRIP_PANEL_H * u / 2);
-    ctx.fillText(`${e.minesRemaining()}`, mineX + STRIP_PANEL_W * u / 2, mineY + STRIP_PANEL_H * u / 2);
+    ctx.fillText(`${this.seconds}`, this.v(timeX + STRIP_PANEL_W * u / 2), this.v(timeY + STRIP_PANEL_H * u / 2));
+    ctx.fillText(`${e.minesRemaining()}`, this.v(mineX + STRIP_PANEL_W * u / 2), this.v(mineY + STRIP_PANEL_H * u / 2));
   }
 
   // ------------------------------------------------------------------ 交互

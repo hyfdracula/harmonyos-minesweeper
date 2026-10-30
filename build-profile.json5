@@ -1,6 +1,20 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\19161\\.ohos\\config\\default_saolei_pqiXamiyoNzr-LFgAypfLoZdaPlbF41tHyfG5GR-piY=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B11A945DF95512E57DA87DE98D555EE9EF167BC1C0F4AE64A62BEAA721ED489812AB8C58855847A",
+          "profile": "C:\\Users\\19161\\.ohos\\config\\default_saolei_pqiXamiyoNzr-LFgAypfLoZdaPlbF41tHyfG5GR-piY=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\19161\\.ohos\\config\\default_saolei_pqiXamiyoNzr-LFgAypfLoZdaPlbF41tHyfG5GR-piY=.p12",
+          "storePassword": "0000001BFF2DB25232571759B0E45C50053FB2075F993B76C359257DEF1A87FF6B3F0A6554963BB9CB43F8"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",

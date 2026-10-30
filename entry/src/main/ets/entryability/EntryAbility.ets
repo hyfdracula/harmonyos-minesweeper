@@ -1,4 +1,4 @@
-import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
+import { AbilityConstant, ConfigurationConstant, UIAbility, Want, errorManager } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 
@@ -7,6 +7,15 @@ const DOMAIN = 0x0000;
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+    // 抓未捕获的 ArkTS 异常：没有这个处理器时，未捕获异常会直接终止应用
+    try {
+      errorManager.on('globalErrorOccurred', (reason) => {
+        hilog.error(DOMAIN, 'testTag', '未捕获异常 name=%{public}s msg=%{public}s stack=%{public}s',
+          reason.name, reason.message, reason.stack ?? '');
+      });
+    } catch (err) {
+      hilog.error(DOMAIN, 'testTag', '注册错误处理器失败: %{public}s', JSON.stringify(err));
+    }
   }
 
   onDestroy(): void {
