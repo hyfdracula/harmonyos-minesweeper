@@ -22,14 +22,21 @@ export class SpriteAtlas {
   gameSheet: image.PixelMap | null = null;
   /** otherSheet：时钟、踩雷动画、拆雷动画、胜利扫描条 */
   otherSheet: image.PixelMap | null = null;
-  /** Frame.png：棋盘区底板（九宫格，1 倍） */
+  /** Frame.png：棋盘区底板（九宫格，1 倍）。实测这张图上下颠倒、角落还藏着状态条素材，
+   *  九宫格不能直接用，本项目不加载它 */
   frameSheet: image.PixelMap | null = null;
 
+  /** 是否已经加载过（页面重建时不必重复读资源） */
+  loaded: boolean = false;
+
   async load(ctx: common.UIAbilityContext): Promise<void> {
+    if (this.loaded) {
+      return;
+    }
     this.boardSheet = await SpriteAtlas.loadPixelMap(ctx, 'blueSheet.png');
     this.gameSheet = await SpriteAtlas.loadPixelMap(ctx, 'minesweeperSheet.png');
     this.otherSheet = await SpriteAtlas.loadPixelMap(ctx, 'otherSheet.png');
-    this.frameSheet = await SpriteAtlas.loadPixelMap(ctx, 'Frame.png');
+    this.loaded = true;
   }
 
   private static async loadPixelMap(ctx: common.UIAbilityContext, name: string): Promise<image.PixelMap | null> {

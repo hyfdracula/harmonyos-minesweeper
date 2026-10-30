@@ -10,11 +10,13 @@
  *   按下 → 记录位置并起 400ms 定时器（长按插旗）
  *   移动 → 超过阈值取消长按
  *   抬起 → 没触发过长按且没怎么移动 = 单击开格
+ *   300ms 内连点同一格 = 和弦（双击已翻开的数字格）
  */
 
 import { display } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { GameController } from '../common/GameController';
+import { GameSession } from '../common/GameSession';
 
 /** ArkUI 的长度可能是数字、百分比字符串或资源，这里统一取数字 */
 function lengthToNumber(v: Length): number {
@@ -27,9 +29,13 @@ function lengthToNumber(v: Length): number {
   return 0;
 }
 
+/** 双击判定的最大间隔（毫秒） */
+const DOUBLE_TAP_MS: number = 300;
+
 @Component
 export struct MinefieldCanvas {
-  controller: GameController = new GameController();
+  /** 全局控制器（状态在页面生命周期之上，折叠/旋转不丢局） */
+  private controller: GameController = GameSession.controller;
 
   private settings: RenderingContextSettings = new RenderingContextSettings(true);
   private context: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings);
@@ -47,11 +53,22 @@ export struct MinefieldCanvas {
   private longPressFired: boolean = false;
   private longPressTimer: number = -1;
 
+  /** 上一次点击：用于双击和弦 */
+  private lastTapIndex: number = -1;
+  private lastTapTime: number = 0;
+
   aboutToAppear(): void {
     this.density = display.getDefaultDisplaySync().densityPixels;
     const abilityCtx = getContext(this) as common.UIAbilityContext;
     this.controller.atlas.load(abilityCtx).then(() => {
-      this.controller.startNewGame(9, 9, 10);
+      if (this.controller.engine.rowCount <= 0) {
+        // 第一次进来：按当前难度开新局
+        const cfg = GameController.configOf(this.controller.difficulty);
+        this.controller.startNewGame(cfg.rows, cfg.cols, cfg.mines);
+      } else {
+        // 页面重建（折叠/旋转）：接着原局继续
+        this.controller.resume();
+      }
     });
   }
 
@@ -124,7 +141,7 @@ export struct MinefieldCanvas {
         } else if (event.type === TouchType.Up) {
           this.clearLongPress();
           if (!this.longPressFired && !this.moved) {
-            this.controller.tap(px, py);
+            this.handleTap(px, py);
           }
           this.longPressFired = false;
         } else {
@@ -132,5 +149,22 @@ export struct MinefieldCanvas {
           this.longPressFired = false;
         }
       })
+  }
+
+  /**
+   * 单击 = 开格；300ms 内再点同一格 = 和弦。
+   * 第一下点在已翻开的数字格上时引擎不做任何事，所以双击不会被第一下吃掉。
+   */
+  private handleTap(px: number, py: number): void {
+    const idx = this.controller.hitTest(px, py);
+    const now = Date.now();
+    if (idx >= 0 && idx === this.lastTapIndex && now - this.lastTapTime < DOUBLE_TAP_MS) {
+      this.lastTapIndex = -1;
+      this.controller.chord(px, py);
+      return;
+    }
+    this.lastTapIndex = idx;
+    this.lastTapTime = now;
+    this.controller.tap(px, py);
   }
 }

@@ -21,6 +21,21 @@ import {
   STRIP_BAND, STRIP_CLOCK_SIZE, STRIP_PANEL_W, STRIP_PANEL_H, STRIP_GAP, stripMargin
 } from './Theme';
 
+/** 难度档位（与原版一致） */
+export enum Difficulty {
+  Beginner = 0,       // 初级 9×9，10 雷
+  Intermediate = 1,   // 中级 16×16，40 雷
+  Expert = 2          // 高级 16 行 × 30 列，99 雷
+}
+
+/** 一档难度的盘面参数 */
+export interface DifficultyConfig {
+  rows: number;
+  cols: number;
+  mines: number;
+  name: string;
+}
+
 export class GameController {
   engine: MinesweeperEngine = new MinesweeperEngine();
   atlas: SpriteAtlas = new SpriteAtlas();
@@ -52,10 +67,41 @@ export class GameController {
   /** 悬停格（鼠标用，触屏暂用按下态） */
   hoverIndex: number = -1;
 
+  /** 当前难度 */
+  difficulty: Difficulty = Difficulty.Beginner;
+  /** 终局回调（页面用它弹结果面板） */
+  onGameOver: ((won: boolean) => void) | null = null;
+  private gameOverNotified: boolean = false;
+
+  /** 各难度的盘面参数 */
+  static configOf(d: Difficulty): DifficultyConfig {
+    if (d === Difficulty.Intermediate) {
+      return { rows: 16, cols: 16, mines: 40, name: '中级' };
+    }
+    if (d === Difficulty.Expert) {
+      return { rows: 16, cols: 30, mines: 99, name: '高级' };
+    }
+    return { rows: 9, cols: 9, mines: 10, name: '初级' };
+  }
+
+  /** 换难度并开新局 */
+  setDifficulty(d: Difficulty): void {
+    this.difficulty = d;
+    const cfg = GameController.configOf(d);
+    this.startNewGame(cfg.rows, cfg.cols, cfg.mines);
+  }
+
+  /** 同难度重开 */
+  restart(): void {
+    const cfg = GameController.configOf(this.difficulty);
+    this.startNewGame(cfg.rows, cfg.cols, cfg.mines);
+  }
+
   startNewGame(rows: number, cols: number, mines: number): void {
     this.engine.reset(rows, cols, mines);
     this.seconds = 0;
     this.stopTimer();
+    this.gameOverNotified = false;
     this.layout();
     this.draw();
   }
@@ -271,6 +317,29 @@ export class GameController {
       this.startTimer();
     }
     this.syncTimerWithState();
+    this.notifyGameOver();
+    this.draw();
+  }
+
+  /**
+   * 和弦：点已翻开且带数字的格子，若周围旗数等于数字就翻开其余邻格。
+   * 旗插错了会同时引爆并判负（引擎处理）。
+   */
+  chord(px: number, py: number): void {
+    const idx = this.hitTest(px, py);
+    if (idx < 0) {
+      return;
+    }
+    const e = this.engine;
+    const r = Math.floor(idx / e.colCount);
+    const c = idx - r * e.colCount;
+    const cell = e.cellAt(r, c);
+    if (!cell.revealed || cell.adjacent <= 0) {
+      return;
+    }
+    e.chord(r, c);
+    this.syncTimerWithState();
+    this.notifyGameOver();
     this.draw();
   }
 
@@ -293,6 +362,22 @@ export class GameController {
     const s = this.engine.gameState;
     if (s === GameState.Won || s === GameState.Lost) {
       this.stopTimer();
+    }
+  }
+
+  /** 终局只通知一次 */
+  private notifyGameOver(): void {
+    if (this.gameOverNotified) {
+      return;
+    }
+    const s = this.engine.gameState;
+    if (s !== GameState.Won && s !== GameState.Lost) {
+      return;
+    }
+    this.gameOverNotified = true;
+    const cb = this.onGameOver;
+    if (cb !== null) {
+      cb(s === GameState.Won);
     }
   }
 
@@ -321,5 +406,16 @@ export class GameController {
   dispose(): void {
     this.stopTimer();
     this.context = null;
+  }
+
+  /** 页面重建（折叠/旋转）后恢复：接着原局继续，计时器重新走 */
+  resume(): void {
+    if (this.engine.gameState === GameState.Playing) {
+      this.startTimer();
+    }
+    if (this.context !== null) {
+      this.layout();
+      this.draw();
+    }
   }
 }
