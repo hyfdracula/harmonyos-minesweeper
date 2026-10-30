@@ -9,6 +9,8 @@
 
 /** 原版逻辑格子边长 */
 export const TILE: number = 18;
+/** 最大缩放档位：n=8 时每格 288 设备像素（unit=16，仍是素材的整数倍放大） */
+export const MAX_SCALE_INDEX: number = 8;
 
 /** 素材相对逻辑坐标的倍数 */
 export const SPRITE_SCALE: number = 2;

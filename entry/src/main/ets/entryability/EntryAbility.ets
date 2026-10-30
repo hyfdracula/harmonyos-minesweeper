@@ -1,6 +1,7 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want, errorManager } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { GameSession } from '../common/GameSession';
 
 const DOMAIN = 0x0000;
 
@@ -48,11 +49,23 @@ export default class EntryAbility extends UIAbility {
 
   onForeground(): void {
     // Ability has brought to foreground
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
+    hilog.info(DOMAIN, 'testTag', 'Ability onForeground');
+    try {
+      // 回到前台：若正在游戏中则恢复计时
+      GameSession.controller.resumeFromBackground();
+    } catch (err) {
+      hilog.error(DOMAIN, 'testTag', '恢复计时失败: %{public}s', JSON.stringify(err));
+    }
   }
 
   onBackground(): void {
     // Ability has back to background
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
+    hilog.info(DOMAIN, 'testTag', 'Ability onBackground');
+    try {
+      // 切后台暂停计时：手机上放口袋时不该继续耗秒数
+      GameSession.controller.pauseForBackground();
+    } catch (err) {
+      hilog.error(DOMAIN, 'testTag', '暂停计时失败: %{public}s', JSON.stringify(err));
+    }
   }
 }

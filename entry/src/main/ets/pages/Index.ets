@@ -10,6 +10,7 @@
 import { MinefieldCanvas } from '../components/MinefieldCanvas';
 import { GameController, Difficulty } from '../common/GameController';
 import { GameSession } from '../common/GameSession';
+import { common } from '@kit.AbilityKit';
 
 @Entry
 @Component
@@ -26,6 +27,30 @@ struct Index {
       this.won = isWin;
       this.gameOver = true;
     };
+    // 结束对话框（画布自绘）的按钮动作
+    this.controller.onDialogAction = (action: string) => {
+      if (action === 'again') {
+        this.newGame();
+      } else if (action === 'menu') {
+        this.controller.closeDialog();
+        this.gameOver = false;
+        this.setMenu(true);
+      } else if (action === 'exit') {
+        this.controller.closeDialog();
+        this.gameOver = false;
+        this.exitApp();
+      }
+    };
+  }
+
+  /** 退出应用（对应原版对话框的「退出(X)」） */
+  private exitApp(): void {
+    try {
+      const ability = getContext(this) as common.UIAbilityContext;
+      ability.terminateSelf();
+    } catch (err) {
+      console.error('[Index] 退出应用失败: ' + (err as Error).message);
+    }
   }
 
   private startGame(d: Difficulty): void {
@@ -147,44 +172,8 @@ struct Index {
         .hitTestBehavior(HitTestMode.Transparent)
       }
 
-      // 终局结算（居中）
-      if (this.gameOver) {
-        Stack({ alignContent: Alignment.Center }) {
-        Column() {
-          Text(this.won ? '扫雷成功' : '踩到雷了')
-            .fontSize(20)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.won ? '#1a7f37' : '#b3261e')
-            .margin({ bottom: 6 })
-          Text(this.won ? `用时 ${this.controller.seconds} 秒` : '再来一局吧')
-            .fontSize(14)
-            .fontColor('#4a5169')
-            .margin({ bottom: 14 })
-          Button('再来一局')
-            .fontSize(15)
-            .backgroundColor('#1d5fd0')
-            .onClick(() => {
-              this.newGame();
-            })
-          Button('换个难度')
-            .fontSize(15)
-            .backgroundColor('#8b93a7')
-            .margin({ top: 8 })
-            .onClick(() => {
-              this.menuOpen = true;
-              this.gameOver = false;
-            })
-        }
-        .width(220)
-        .padding({ top: 22, bottom: 22 })
-        .backgroundColor('#f2f4f9')
-        .borderRadius(12)
-        .shadow({ radius: 16, color: '#50000000', offsetX: 0, offsetY: 4 })
-        }
-        .width('100%')
-        .height('100%')
-        .hitTestBehavior(HitTestMode.Transparent)
-      }
+      // 结束对话框不再用 ArkUI 面板：原版 Win7 风格的对话框直接画在画布上
+      // （见 common/WinDialog.ets），这里只保留一个空壳避免误触。
     }
     .width('100%')
     .height('100%')

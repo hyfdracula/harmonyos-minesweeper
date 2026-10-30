@@ -13,8 +13,11 @@
 
 import { MinesweeperEngine, Mark, GameState } from './MinesweeperEngine';
 import { SpriteAtlas } from './SpriteAtlas';
+import { WinDialogPainter, DlgSpec } from './WinDialog';
+import { GameStats } from './GameStats';
+import { SoundPlayer, Sound } from './SoundPlayer';
 import {
-  TILE, FRAME_GAP_L, FRAME_GAP_T, FRAME_GAP_R, FRAME_GAP_B,
+  TILE, MAX_SCALE_INDEX, FRAME_GAP_L, FRAME_GAP_T, FRAME_GAP_R, FRAME_GAP_B,
   gradientFrame, normalTileRect, pressedTileRect, RECT_FLAG, RECT_QUESTION, RECT_HILITE, RECT_MISFLAG,
   RECT_SHADOW_U, RECT_SHADOW_L, RECT_COUNTER, digitRect, RECT_MINE, RECT_PANEL_MINE, RECT_CLOCK,
   COLOR_OUTSIDE, COLOR_FLOOR, COLOR_SUNKEN,
@@ -50,8 +53,6 @@ export class GameController {
 
   /** 每个逻辑单位的设备像素数 = 2 × 缩放档位 */
   unit: number = 2;
-  /** 缩放档位 n（1..8） */
-  scaleIndex: number = 1;
 
   /**
    * 设备像素 → Canvas 坐标（vp）的换算系数 = 1 / densityPixels。
@@ -79,10 +80,29 @@ export class GameController {
   /** 当前难度 */
   difficulty: Difficulty = Difficulty.Beginner;
 
+  // ---------------------------------------------------------------- 缩放 / 平移
+
+  /** 缩放档位 n：每格边长 = TILE * (2n)，n=1 时 36 设备像素，n=8 时 288 */
+  scaleIndex: number = 3;
+  /** 「整盘刚好放下」所需的档位（随画布尺寸变化） */
+  fitScaleIndex: number = 3;
+  /** 用户是否手动缩放过：没缩放过就始终用 fit 档 */
+  userZoomed: boolean = false;
+  /** 棋盘平移量（设备像素） */
+  panX: number = 0;
+  panY: number = 0;
+
   /** 菜单打开时为 true：棋盘不吃触摸，避免菜单与棋盘抢点击 */
   inputLocked: boolean = false;
+  /** 结束对话框（原版 Win7 风格）；null 表示没开 */
+  dialog: DlgSpec | null = null;
+  private dialogScale: number = 1;
+  private dialogOx: number = 0;
+  private dialogOy: number = 0;
   /** 终局回调（页面用它弹结果面板） */
   onGameOver: ((won: boolean) => void) | null = null;
+  /** 结束对话框按钮被点：'again' | 'menu' | 'exit' */
+  onDialogAction: ((action: string) => void) | null = null;
   private gameOverNotified: boolean = false;
 
   /** 各难度的盘面参数 */
@@ -114,8 +134,14 @@ export class GameController {
     this.seconds = 0;
     this.stopTimer();
     this.gameOverNotified = false;
+    this.dialog = null;
+    // 新局回到「整盘刚好放下」的视角
+    this.userZoomed = false;
+    this.panX = 0;
+    this.panY = 0;
     this.layout();
     this.draw();
+    SoundPlayer.play(Sound.GAME_START);
   }
 
   /** 画布就绪 / 尺寸变化 */
@@ -140,33 +166,112 @@ export class GameController {
     if (e.rowCount <= 0 || e.colCount <= 0 || this.canvasW <= 0) {
       return;
     }
-    // 选一个整盘放得下的最大档位
-    let best = 1;
-    for (let n = 1; n <= 8; n++) {
+    // 1) 算出「整盘刚好放下」的档位
+    let fit = 1;
+    for (let n = 1; n <= MAX_SCALE_INDEX; n++) {
       const u = 2 * n;
       const fw = e.colCount * TILE * u + (FRAME_GAP_L + FRAME_GAP_R) * u;
       const fh = e.rowCount * TILE * u + (FRAME_GAP_T + FRAME_GAP_B) * u;
       if (fw <= this.canvasW && fh <= this.canvasH) {
-        best = n;
+        fit = n;
       } else {
         break;
       }
     }
-    this.scaleIndex = best;
-    this.unit = 2 * best;
-    this.tile = TILE * this.unit;
+    this.fitScaleIndex = fit;
+    // 2) 用户没手动缩放过就用适配档；缩放过就保留用户的档位（折叠换屏时不丢视角）
+    if (!this.userZoomed) {
+      this.scaleIndex = fit;
+      this.panX = 0;
+      this.panY = 0;
+    }
+    this.applyGeometry();
+    this.clampPan();
+    this.applyGeometry();
+    console.info('[GameController] 布局 画布=' + this.canvasW + 'x' + this.canvasH + 'px 密度换算=' +
+      this.pxScale.toFixed(4) + ' 适配档n=' + fit + ' 当前档n=' + this.scaleIndex +
+      ' unit=' + this.unit + ' 格边=' + this.tile + 'px 棋盘原点=(' + this.boardX + ',' + this.boardY + ')');
+  }
 
+  /** 根据当前档位与平移量重算各矩形（设备像素） */
+  private applyGeometry(): void {
+    const e = this.engine;
+    const u = 2 * this.scaleIndex;
+    this.unit = u;
+    this.tile = TILE * u;
     const boardW = e.colCount * this.tile;
     const boardH = e.rowCount * this.tile;
-    this.frameW = boardW + (FRAME_GAP_L + FRAME_GAP_R) * this.unit;
-    this.frameH = boardH + (FRAME_GAP_T + FRAME_GAP_B) * this.unit;
-    this.frameX = Math.round((this.canvasW - this.frameW) / 2);
-    this.frameY = Math.round((this.canvasH - this.frameH) / 2);
-    this.boardX = this.frameX + FRAME_GAP_L * this.unit;
-    this.boardY = this.frameY + FRAME_GAP_T * this.unit;
-    console.info('[GameController] 布局 画布=' + this.canvasW + 'x' + this.canvasH + 'px 密度换算=' +
-      this.pxScale.toFixed(4) + ' 档位n=' + best + ' unit=' + this.unit +
-      ' 格边=' + this.tile + 'px 棋盘原点=(' + this.boardX + ',' + this.boardY + ')');
+    this.frameW = boardW + (FRAME_GAP_L + FRAME_GAP_R) * u;
+    this.frameH = boardH + (FRAME_GAP_T + FRAME_GAP_B) * u;
+    this.frameX = Math.round((this.canvasW - this.frameW) / 2) + this.panX;
+    this.frameY = Math.round((this.canvasH - this.frameH) / 2) + this.panY;
+    this.boardX = this.frameX + FRAME_GAP_L * u;
+    this.boardY = this.frameY + FRAME_GAP_T * u;
+  }
+
+  /** 平移量夹紧：棋盘不能被拖出画布；整盘放得下时不允许平移 */
+  private clampPan(): void {
+    const halfW = (this.canvasW - this.frameW) / 2;
+    const halfH = (this.canvasH - this.frameH) / 2;
+    if (halfW <= 0) {
+      this.panX = 0;
+    } else {
+      this.panX = Math.max(-halfW, Math.min(halfW, this.panX));
+    }
+    if (halfH <= 0) {
+      this.panY = 0;
+    } else {
+      this.panY = Math.max(-halfH, Math.min(halfH, this.panY));
+    }
+  }
+
+  /** 缩放到指定档位（1..MAX_SCALE_INDEX），以画布坐标 (fx,fy)（设备像素）为锚点 */
+  zoomTo(n: number, fx: number, fy: number): void {
+    const target = Math.max(1, Math.min(MAX_SCALE_INDEX, Math.round(n)));
+    if (target === this.scaleIndex) {
+      return;
+    }
+    const oldTile = this.tile;
+    const oldBoardX = this.boardX;
+    const oldBoardY = this.boardY;
+    this.scaleIndex = target;
+    this.userZoomed = true;
+    this.applyGeometry();
+    // 让锚点处的棋盘内容保持不动：boardX_new = fx - (fx - boardX_old) * (tile_new / tile_old)
+    const k = this.tile / oldTile;
+    const wantBoardX = fx - (fx - oldBoardX) * k;
+    const wantBoardY = fy - (fy - oldBoardY) * k;
+    this.panX += wantBoardX - this.boardX;
+    this.panY += wantBoardY - this.boardY;
+    this.clampPan();
+    this.applyGeometry();
+    this.draw();
+  }
+
+  /** 按设备像素平移棋盘 */
+  panBy(dx: number, dy: number): void {
+    if (dx === 0 && dy === 0) {
+      return;
+    }
+    this.panX += dx;
+    this.panY += dy;
+    this.clampPan();
+    this.applyGeometry();
+    this.draw();
+  }
+
+  /** 回到「整盘刚好放下」的视角 */
+  resetView(): void {
+    this.userZoomed = false;
+    this.panX = 0;
+    this.panY = 0;
+    this.layout();
+    this.draw();
+  }
+
+  /** 当前档位下，一格边长占画布的比例（捏合缩放用） */
+  get tileRatio(): number {
+    return this.tile / 36;
   }
 
   // ------------------------------------------------------------------ 绘制
@@ -186,6 +291,7 @@ export class GameController {
       this.drawBoardArea(ctx);
       this.drawBoard(ctx);
       this.drawStatusStrip(ctx);
+      this.drawDialog(ctx);
     } catch (err) {
       console.error('[GameController] 绘制失败: ' + (err as Error).message);
     }
@@ -355,6 +461,10 @@ export class GameController {
 
   /** 点一格：开格 */
   tap(px: number, py: number): void {
+    if (this.dialog !== null) {
+      // 结束对话框开着时，棋盘不接受点击
+      return;
+    }
     const idx = this.hitTest(px, py);
     if (idx < 0) {
       return;
@@ -363,7 +473,19 @@ export class GameController {
     const r = Math.floor(idx / e.colCount);
     const c = idx - r * e.colCount;
     const wasReady = e.gameState === GameState.Ready;
-    e.reveal(r, c);
+    const outcome = e.reveal(r, c);
+    if (outcome.changed) {
+      if (outcome.lost) {
+        // 踩雷：原版是三段爆炸声
+        SoundPlayer.playSequence([Sound.BOMB_START, Sound.BOMB_RUN, Sound.BOMB_END], 260);
+      } else if (outcome.opened.length > 1) {
+        SoundPlayer.play(Sound.TILE_MULTIPLE);
+      } else {
+        SoundPlayer.play(Sound.TILE_SINGLE);
+      }
+    } else if (!e.cellAt(r, c).revealed && e.cellAt(r, c).mark !== Mark.Flag) {
+      SoundPlayer.play(Sound.INVALID_MOVE);
+    }
     if (wasReady && e.gameState === GameState.Playing) {
       this.startTimer();
     }
@@ -388,7 +510,11 @@ export class GameController {
     if (!cell.revealed || cell.adjacent <= 0) {
       return;
     }
+    const before = e.revealedCount;
     e.chord(r, c);
+    if (e.revealedCount > before) {
+      SoundPlayer.play(Sound.TILE_MULTIPLE);
+    }
     this.syncTimerWithState();
     this.notifyGameOver();
     this.draw();
@@ -404,6 +530,7 @@ export class GameController {
     const r = Math.floor(idx / e.colCount);
     const c = idx - r * e.colCount;
     e.toggleMark(r, c);
+    SoundPlayer.play(Sound.FLAG);
     this.syncTimerWithState();
     this.draw();
   }
@@ -426,10 +553,71 @@ export class GameController {
       return;
     }
     this.gameOverNotified = true;
+    this.buildDialog(s === GameState.Won);
+    SoundPlayer.play(s === GameState.Won ? Sound.GAME_WIN : Sound.GAME_LOSE);
     const cb = this.onGameOver;
     if (cb !== null) {
       cb(s === GameState.Won);
     }
+  }
+
+  // ------------------------------------------------------------------ 结束对话框
+
+  /** 生成结束对话框（原版 Win7 风格） */
+  private buildDialog(won: boolean): void {
+    GameStats.record(won, this.seconds).catch(() => {
+      // 存档失败不影响对局
+    });
+    const isNewBest = won && (GameStats.bestSeconds < 0 || this.seconds <= GameStats.bestSeconds);
+    if (won) {
+      this.dialog = WinDialogPainter.winSpec(this.seconds, GameStats.played, GameStats.won,
+        GameStats.percent, GameStats.bestText, GameStats.bestDate, isNewBest);
+    } else {
+      this.dialog = WinDialogPainter.loseSpec(this.seconds, GameStats.played, GameStats.won, GameStats.percent);
+    }
+  }
+
+  /** 对话框当前的绘制参数（缩放与位置） */
+  private dialogLayout(): void {
+    const d = this.dialog;
+    if (d === null) {
+      return;
+    }
+    // 参考像素 → 设备像素：按画布宽度取一个整数感舒服的倍数
+    const s = Math.max(1, Math.min(2, this.canvasW / 1400));
+    this.dialogScale = s;
+    this.dialogOx = Math.round((this.canvasW - d.width * s) / 2);
+    this.dialogOy = Math.round((this.canvasH - d.height * s) / 2);
+  }
+
+  /** 画结束对话框 */
+  private drawDialog(ctx: CanvasRenderingContext2D): void {
+    const d = this.dialog;
+    if (d === null) {
+      return;
+    }
+    this.dialogLayout();
+    // 几何用 vp，字号用设备像素：两者差一个密度（见 SPEC §5.7）
+    WinDialogPainter.draw(ctx, d, this.dialogScale, this.dialogScale * this.pxScale,
+      this.v(this.dialogOx), this.v(this.dialogOy));
+  }
+
+  /**
+   * 点到结束对话框的按钮：返回动作标识，没点到返回 null。
+   * 对话框打开时棋盘不接受点击。
+   */
+  dialogButtonAt(px: number, py: number): string | null {
+    const d = this.dialog;
+    if (d === null) {
+      return null;
+    }
+    this.dialogLayout();
+    return WinDialogPainter.hitButton(d, this.dialogScale, this.dialogOx, this.dialogOy, px, py);
+  }
+
+  /** 关闭结束对话框（比如重新开局时） */
+  closeDialog(): void {
+    this.dialog = null;
   }
 
   // ------------------------------------------------------------------ 计时
@@ -457,6 +645,21 @@ export class GameController {
   dispose(): void {
     this.stopTimer();
     this.context = null;
+  }
+
+  /** 应用切到后台：暂停计时（手机上放口袋不该继续耗秒数） */
+  pauseForBackground(): void {
+    if (this.timerHandle !== -1) {
+      clearInterval(this.timerHandle);
+      this.timerHandle = -1;
+    }
+  }
+
+  /** 应用回到前台：若正在游戏中则恢复计时 */
+  resumeFromBackground(): void {
+    if (this.engine.gameState === GameState.Playing) {
+      this.startTimer();
+    }
   }
 
   /** 页面重建（折叠/旋转）后恢复：接着原局继续，计时器重新走 */
