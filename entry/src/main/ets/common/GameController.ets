@@ -17,6 +17,8 @@ import { WinDialogPainter, DlgSpec } from './WinDialog';
 import { GameStats } from './GameStats';
 import { SoundPlayer, Sound } from './SoundPlayer';
 import { WinMenuPainter, MenuSpec, MENU_BAR_H } from './WinMenu';
+import { CustomField, CustomSpec, DLG_W, DLG_H } from './CustomField';
+import { NumKeypad } from './NumKeypad';
 import {
   TILE, MAX_SCALE_INDEX, FRAME_GAP_L, FRAME_GAP_T, FRAME_GAP_R, FRAME_GAP_B,
   gradientFrame, normalTileRect, pressedTileRect, RECT_FLAG, RECT_QUESTION, RECT_HILITE, RECT_MISFLAG,
@@ -105,6 +107,10 @@ export class GameController {
   menuOpenId: string = '';
   /** 菜单栏的菜单规格（随当前难度打勾而变） */
   private menuSpec: MenuSpec = { tops: [] };
+  /** 「自定义」对话框（null = 没开） */
+  customSpec: CustomSpec | null = null;
+  private customOx: number = 0;
+  private customOy: number = 0;
   /** 终局回调（页面用它弹结果面板） */
   onGameOver: ((won: boolean) => void) | null = null;
   /** 结束对话框按钮被点：'again' | 'menu' | 'exit' */
@@ -300,6 +306,7 @@ export class GameController {
       this.drawBoard(ctx);
       this.drawStatusStrip(ctx);
       this.drawMenu(ctx);
+      this.drawCustom(ctx);
       this.drawDialog(ctx);
     } catch (err) {
       console.error('[GameController] 绘制失败: ' + (err as Error).message);
@@ -627,6 +634,99 @@ export class GameController {
     this.draw();
   }
 
+  // ------------------------------------------------------------ 自定义难度
+
+  /** 打开「自定义」对话框（按当前难度的行列数预填） */
+  openCustomDialog(): void {
+    const cfg = GameController.configOf(this.difficulty);
+    this.customSpec = CustomField.specOf(cfg.rows, cfg.cols, cfg.mines);
+    this.dialog = null;
+    this.menuOpenId = '';
+    this.draw();
+  }
+
+  /** 自定义对话框 + 数字键盘的摆放位置（设备像素） */
+  private customLayout(): void {
+    const s = this.dialogScale;
+    const dlgW = DLG_W * s;
+    const keyW = NumKeypad.width() * s;
+    const totalW = dlgW + 12 * s + keyW;
+    const totalH = Math.max(DLG_H * s, NumKeypad.height() * s);
+    this.customOx = Math.round((this.canvasW - totalW) / 2);
+    this.customOy = Math.round((this.canvasH - totalH) / 2);
+  }
+
+  /** 画「自定义」对话框与数字键盘 */
+  private drawCustom(ctx: CanvasRenderingContext2D): void {
+    const spec = this.customSpec;
+    if (spec === null) {
+      return;
+    }
+    this.customLayout();
+    const sDev = this.dialogScale;
+    const sVp = this.dialogScale * this.pxScale;
+    const oxVp = this.v(this.customOx);
+    const oyVp = this.v(this.customOy);
+    CustomField.draw(ctx, spec, sDev, sVp, oxVp, oyVp);
+    // 数字键盘放在对话框右边
+    const keyX = oxVp + (DLG_W + 12) * sVp;
+    NumKeypad.draw(ctx, sDev, sVp, keyX, oyVp);
+  }
+
+  /**
+   * 「自定义」对话框的命中测试。
+   * @param px 设备像素
+   * @param py 设备像素
+   * @return 'ok' | 'cancel' | 'height' | 'width' | 'mines' | ''（没点到）
+   */
+  customActionAt(px: number, py: number): string {
+    const spec = this.customSpec;
+    if (spec === null) {
+      return '';
+    }
+    this.customLayout();
+    const sVp = this.dialogScale * this.pxScale;
+    const oxVp = this.v(this.customOx);
+    const oyVp = this.v(this.customOy);
+    const pxVp = this.v(px);
+    const pyVp = this.v(py);
+    // 先看对话框本身
+    const inDlg = pxVp >= oxVp && pxVp <= oxVp + DLG_W * sVp &&
+      pyVp >= oyVp && pyVp <= oyVp + DLG_H * sVp;
+    if (inDlg) {
+      const hit = CustomField.hit(spec, this.dialogScale, sVp, oxVp, oyVp, pxVp, pyVp);
+      if (hit === 'ok') {
+        const s = CustomField.clampSpec(spec);
+        this.customSpec = null;
+        this.startNewGame(s.height, s.width, s.mines);
+        this.draw();
+        return '';
+      }
+      if (hit === 'cancel') {
+        this.customSpec = null;
+        this.draw();
+        return '';
+      }
+      if (hit.length > 0) {
+        CustomField.focusField(spec, hit);
+        this.draw();
+      }
+      return '';
+    }
+    // 再看数字键盘
+    const keyX = oxVp + (DLG_W + 12) * sVp;
+    const key = NumKeypad.hit(sVp, keyX, oyVp, pxVp, pyVp);
+    if (key.length > 0) {
+      if (key === 'del') {
+        CustomField.backspace(spec);
+      } else {
+        CustomField.inputChar(spec, key);
+      }
+      this.draw();
+    }
+    return '';
+  }
+
   /**
    * 点到结束对话框的按钮：返回动作标识，没点到返回 null。
    * 对话框打开时棋盘不接受点击。
@@ -663,6 +763,7 @@ export class GameController {
             { id: 'beginner', label: '初级', checked: this.difficulty === Difficulty.Beginner },
             { id: 'intermediate', label: '中级', checked: this.difficulty === Difficulty.Intermediate },
             { id: 'expert', label: '高级', checked: this.difficulty === Difficulty.Expert },
+            { id: 'custom', label: '自定义' },
             { id: 'sep2', label: '', separator: true },
             { id: 'sound', label: '声音', checked: SoundPlayer.isEnabled },
             { id: 'sep3', label: '', separator: true },

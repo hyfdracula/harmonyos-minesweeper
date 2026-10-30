@@ -274,6 +274,11 @@ export struct MinefieldCanvas {
    * 第一下点在已翻开的数字格上时引擎不做任何事，所以双击不会被第一下吃掉。
    */
   private handleTap(px: number, py: number): void {
+    // 「自定义」对话框开着时，只吃它的点击
+    if (this.controller.customSpec !== null) {
+      this.controller.customActionAt(px, py);
+      return;
+    }
     // 结束对话框优先：点它的按钮
     if (this.controller.dialog !== null) {
       const action = this.controller.dialogButtonAt(px, py);

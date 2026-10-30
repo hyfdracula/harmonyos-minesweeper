@@ -62,6 +62,8 @@ struct Index {
         this.controller.refreshMenu();
       } else if (action === 'best' || action === 'about') {
         this.controller.openInfoDialog(action);
+      } else if (action === 'custom') {
+        this.controller.openCustomDialog();
       } else if (action === 'exit') {
         this.exitApp();
       }
