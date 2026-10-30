@@ -29,15 +29,27 @@ struct Index {
   }
 
   private startGame(d: Difficulty): void {
-    this.menuOpen = false;
-    this.gameOver = false;
-    this.controller.setDifficulty(d);
+    console.info('[Menu] startGame 难度=' + d);
+    try {
+      this.setMenu(false);
+      this.gameOver = false;
+      this.controller.setDifficulty(d);
+      console.info('[Menu] startGame 完成，当前难度=' + this.controller.difficulty);
+    } catch (e) {
+      console.error('[Menu] startGame 异常: ' + (e as Error).message);
+    }
   }
 
   private newGame(): void {
-    this.menuOpen = false;
+    this.setMenu(false);
     this.gameOver = false;
     this.controller.restart();
+  }
+
+  /** 菜单开合：同时同步棋盘输入锁，菜单打开时棋盘不吃触摸 */
+  private setMenu(open: boolean): void {
+    this.menuOpen = open;
+    this.controller.inputLocked = open;
   }
 
   build() {
@@ -62,7 +74,7 @@ struct Index {
           .borderRadius(20)
           .margin({ top: 18, left: 18 })
           .onClick(() => {
-            this.menuOpen = !this.menuOpen;
+            this.setMenu(!this.menuOpen);
           })
       }
       .width('100%')
@@ -72,7 +84,11 @@ struct Index {
       // 菜单面板
       if (this.menuOpen) {
         Stack({ alignContent: Alignment.TopStart }) {
-        Column() {
+          // 菜单面板（自身保持默认命中模式）
+          // 【踩坑】不能在这里铺一层全屏 hitTestBehavior(Block) 遮罩：
+          // 遮罩会和面板里的条目抢同一次点击，条目就随机失灵。
+          // 改成「菜单打开时锁住棋盘输入」（controller.inputLocked），棋盘不会误被点到。
+          Column() {
           Text('扫雷')
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
@@ -95,6 +111,7 @@ struct Index {
             .padding({ top: 8, bottom: 8 })
             .textAlign(TextAlign.Center)
             .onClick(() => {
+              console.info('[Menu] 点击 初级 9x9');
               this.startGame(Difficulty.Beginner);
             })
           Text('中级 16×16')
@@ -104,6 +121,7 @@ struct Index {
             .padding({ top: 8, bottom: 8 })
             .textAlign(TextAlign.Center)
             .onClick(() => {
+              console.info('[Menu] 点击 中级 16x16');
               this.startGame(Difficulty.Intermediate);
             })
           Text('高级 16×30')
@@ -113,6 +131,7 @@ struct Index {
             .padding({ top: 8, bottom: 8 })
             .textAlign(TextAlign.Center)
             .onClick(() => {
+              console.info('[Menu] 点击 高级 16x30');
               this.startGame(Difficulty.Expert);
             })
         }
@@ -122,8 +141,6 @@ struct Index {
         .borderRadius(10)
         .margin({ top: 66, left: 18 })
         .shadow({ radius: 8, color: '#40000000', offsetX: 0, offsetY: 2 })
-        // 面板本身要吃掉触摸，否则点到面板空白处会穿透到棋盘上开格
-        .hitTestBehavior(HitTestMode.Block)
         }
         .width('100%')
         .height('100%')
@@ -163,8 +180,6 @@ struct Index {
         .backgroundColor('#f2f4f9')
         .borderRadius(12)
         .shadow({ radius: 16, color: '#50000000', offsetX: 0, offsetY: 4 })
-        // 结算面板吃掉触摸，别让点击穿透到棋盘
-        .hitTestBehavior(HitTestMode.Block)
         }
         .width('100%')
         .height('100%')

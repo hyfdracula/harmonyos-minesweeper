@@ -78,6 +78,9 @@ export class GameController {
 
   /** 当前难度 */
   difficulty: Difficulty = Difficulty.Beginner;
+
+  /** 菜单打开时为 true：棋盘不吃触摸，避免菜单与棋盘抢点击 */
+  inputLocked: boolean = false;
   /** 终局回调（页面用它弹结果面板） */
   onGameOver: ((won: boolean) => void) | null = null;
   private gameOverNotified: boolean = false;
