@@ -327,7 +327,9 @@ export class GameController {
     this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, mineX, mineY, u);
     this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_PANEL_MINE, iconX, iconY, u);
 
-    ctx.font = `bold ${this.v(12 * u)}px sans-serif`;
+    // 字号单位：Canvas 的 font 里 "px" 是**设备像素**（与画布坐标的 vp 不是一回事，
+    // 真机实测：写成 vp 换算值会让数字小 2.75 倍）。原版字高约 9 单位 → 字号约 12 单位。
+    ctx.font = `bold ${12 * u}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#ffffff';

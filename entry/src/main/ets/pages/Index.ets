@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Index.ets —— 扫雷主页面
  *
  * M2：全屏棋盘 + 左上角菜单（难度切换 / 新游戏）+ 终局结算面板。
@@ -122,6 +122,8 @@ struct Index {
         .borderRadius(10)
         .margin({ top: 66, left: 18 })
         .shadow({ radius: 8, color: '#40000000', offsetX: 0, offsetY: 2 })
+        // 面板本身要吃掉触摸，否则点到面板空白处会穿透到棋盘上开格
+        .hitTestBehavior(HitTestMode.Block)
         }
         .width('100%')
         .height('100%')
@@ -161,6 +163,8 @@ struct Index {
         .backgroundColor('#f2f4f9')
         .borderRadius(12)
         .shadow({ radius: 16, color: '#50000000', offsetX: 0, offsetY: 4 })
+        // 结算面板吃掉触摸，别让点击穿透到棋盘
+        .hitTestBehavior(HitTestMode.Block)
         }
         .width('100%')
         .height('100%')
