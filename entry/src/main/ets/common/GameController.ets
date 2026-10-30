@@ -277,7 +277,9 @@ export class GameController {
             this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_FLAG, x, y, u);
             this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_MISFLAG, x, y, u);
           } else if (cell.adjacent > 0) {
-            this.atlas.drawLogical(ctx, this.atlas.boardSheet, digitRect(cell.adjacent), x, y, u);
+            // 数字框 12×15，在 18×18 的格子里居中（原版实测：数字居于格子中部）
+            this.atlas.drawLogical(ctx, this.atlas.boardSheet, digitRect(cell.adjacent),
+              x + 3 * u, y + 1.5 * u, u);
           }
         } else {
           const frame = gradientFrame(r, c, e.rowCount, e.colCount);

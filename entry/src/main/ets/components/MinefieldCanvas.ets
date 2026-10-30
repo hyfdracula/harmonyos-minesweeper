@@ -1,4 +1,4 @@
-/**
+﻿/**
  * MinefieldCanvas.ets —— 棋盘画布组件
  *
  * 负责三件事：
@@ -173,3 +173,4 @@ export struct MinefieldCanvas {
     this.controller.tap(px, py);
   }
 }
+

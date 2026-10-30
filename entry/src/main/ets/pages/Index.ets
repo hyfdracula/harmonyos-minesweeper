@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Index.ets —— 扫雷主页面
  *
  * M2：全屏棋盘 + 左上角菜单（难度切换 / 新游戏）+ 终局结算面板。
@@ -52,20 +52,26 @@ struct Index {
       .height('100%')
 
       // 左上角菜单按钮（放在棋盘外的空白角上）
-      Button('≡')
-        .width(40)
-        .height(40)
-        .fontSize(22)
-        .fontColor('#2b3550')
-        .backgroundColor('#e8ecf4')
-        .borderRadius(20)
-        .margin({ top: 18, left: 18 })
-        .onClick(() => {
-          this.menuOpen = !this.menuOpen;
-        })
+      Stack({ alignContent: Alignment.TopStart }) {
+        Button('≡')
+          .width(40)
+          .height(40)
+          .fontSize(22)
+          .fontColor('#2b3550')
+          .backgroundColor('#e8ecf4')
+          .borderRadius(20)
+          .margin({ top: 18, left: 18 })
+          .onClick(() => {
+            this.menuOpen = !this.menuOpen;
+          })
+      }
+      .width('100%')
+      .height('100%')
+      .hitTestBehavior(HitTestMode.Transparent)
 
       // 菜单面板
       if (this.menuOpen) {
+        Stack({ alignContent: Alignment.TopStart }) {
         Column() {
           Text('扫雷')
             .fontSize(16)
@@ -116,11 +122,15 @@ struct Index {
         .borderRadius(10)
         .margin({ top: 66, left: 18 })
         .shadow({ radius: 8, color: '#40000000', offsetX: 0, offsetY: 2 })
-        .zIndex(10)
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.Transparent)
       }
 
-      // 终局结算
+      // 终局结算（居中）
       if (this.gameOver) {
+        Stack({ alignContent: Alignment.Center }) {
         Column() {
           Text(this.won ? '扫雷成功' : '踩到雷了')
             .fontSize(20)
@@ -151,8 +161,10 @@ struct Index {
         .backgroundColor('#f2f4f9')
         .borderRadius(12)
         .shadow({ radius: 16, color: '#50000000', offsetX: 0, offsetY: 4 })
-        .zIndex(20)
-        .align(Alignment.Center)
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.Transparent)
       }
     }
     .width('100%')
@@ -160,3 +172,4 @@ struct Index {
     .backgroundColor('#c6cede')
   }
 }
+
