@@ -1,4 +1,4 @@
-﻿/**
+/**
  * MinefieldCanvas.ets —— 棋盘画布组件
  *
  * 负责三件事：
