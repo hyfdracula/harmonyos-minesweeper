@@ -178,6 +178,10 @@ export class GameController {
           }
 
           if (cell.exploded) {
+            // 踩中的那颗雷
+            this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_MINE, x, y, u);
+          } else if (cell.mine) {
+            // 判负时引擎把未插旗的雷全部翻开，这里补上雷
             this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_MINE, x, y, u);
           } else if (cell.misflagged) {
             this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_FLAG, x, y, u);
@@ -188,14 +192,14 @@ export class GameController {
         } else {
           const frame = gradientFrame(r, c, e.rowCount, e.colCount);
           this.atlas.drawLogical(ctx, this.atlas.boardSheet, normalTileRect(frame), x, y, u);
-          if (cell.mine) {
-            // 失败时亮出的雷
-            this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_MINE, x, y, u);
-          }
           if (cell.mark === Mark.Flag) {
             this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_FLAG, x, y, u);
           } else if (cell.mark === Mark.Question) {
             this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_QUESTION, x, y, u);
+          }
+          if (cell.misflagged) {
+            // 插错旗：雷数对不上，旗上打叉（原版判负时这样标）
+            this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_MISFLAG, x, y, u);
           }
           if (idx === this.hoverIndex) {
             this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_HILITE, x, y, u);
@@ -311,5 +315,11 @@ export class GameController {
       clearInterval(this.timerHandle);
       this.timerHandle = -1;
     }
+  }
+
+  /** 组件销毁时调用：停掉计时器，别让它继续往已销毁的画布上画 */
+  dispose(): void {
+    this.stopTimer();
+    this.context = null;
   }
 }

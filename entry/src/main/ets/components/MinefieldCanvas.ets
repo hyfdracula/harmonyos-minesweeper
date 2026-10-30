@@ -57,6 +57,7 @@ export struct MinefieldCanvas {
 
   aboutToDisappear(): void {
     this.clearLongPress();
+    this.controller.dispose();
   }
 
   private tryAttach(): void {
