@@ -1,24 +1,28 @@
 /**
  * Index.ets —— 扫雷主页面
  *
- * M2：全屏棋盘 + 左上角菜单（难度切换 / 新游戏）+ 终局结算面板。
+ * M5 起：菜单栏、结束对话框、最佳成绩、关于框全部**画在画布上**（common/WinMenu.ets、
+ * common/WinDialog.ets），与原版 Windows 一样属于"窗口的一部分"，不是手机浮层。
+ * 页面本身只剩下一个铺满的画布。
  *
- * 原版 Windows 的菜单栏和对话框在手机上没有对应物，这里用两个轻量浮层代替，
- * 全部放在棋盘区之外，不干扰棋盘本身的像素级还原。
+ * 坑（2026-10-31 真机实测）：
+ *   1) `hitTestBehavior(HitTestMode.Block)` 加在容器上，会让它自己的子组件
+ *      （Text/Button 的 onClick）收不到点击 —— 容器一律不要设 Block。
+ *   2) 全屏遮罩会和面板里的条目抢同一次点击，条目随机失灵 —— 不要用遮罩，
+ *      改用 controller.inputLocked 锁住棋盘输入。
  */
 
 import { MinefieldCanvas } from '../components/MinefieldCanvas';
 import { GameController, Difficulty } from '../common/GameController';
 import { GameSession } from '../common/GameSession';
 import { common } from '@kit.AbilityKit';
+import { SoundPlayer } from '../common/SoundPlayer';
 
 @Entry
 @Component
 struct Index {
-  /** 页面持有控制器，子组件只负责绘制与交互 */
   private controller: GameController = GameSession.controller;
-
-  @State private menuOpen: boolean = false;
+  /** 结束对话框是否已显示（状态由控制器持有，这里只用于界面刷新） */
   @State private gameOver: boolean = false;
   @State private won: boolean = false;
 
@@ -34,29 +38,39 @@ struct Index {
       } else if (action === 'menu') {
         this.controller.closeDialog();
         this.gameOver = false;
-        this.setMenu(true);
       } else if (action === 'exit') {
         this.controller.closeDialog();
         this.gameOver = false;
+        this.exitApp();
+      } else if (action === 'close') {
+        this.controller.closeDialog();
+        this.gameOver = false;
+      }
+    };
+    // 菜单栏动作
+    this.controller.onMenuAction = (action: string) => {
+      if (action === 'new') {
+        this.newGame();
+      } else if (action === 'beginner') {
+        this.startGame(Difficulty.Beginner);
+      } else if (action === 'intermediate') {
+        this.startGame(Difficulty.Intermediate);
+      } else if (action === 'expert') {
+        this.startGame(Difficulty.Expert);
+      } else if (action === 'sound') {
+        SoundPlayer.setEnabled(!SoundPlayer.isEnabled);
+        this.controller.refreshMenu();
+      } else if (action === 'best' || action === 'about') {
+        this.controller.openInfoDialog(action);
+      } else if (action === 'exit') {
         this.exitApp();
       }
     };
   }
 
-  /** 退出应用（对应原版对话框的「退出(X)」） */
-  private exitApp(): void {
-    try {
-      const ability = getContext(this) as common.UIAbilityContext;
-      ability.terminateSelf();
-    } catch (err) {
-      console.error('[Index] 退出应用失败: ' + (err as Error).message);
-    }
-  }
-
   private startGame(d: Difficulty): void {
     console.info('[Menu] startGame 难度=' + d);
     try {
-      this.setMenu(false);
       this.gameOver = false;
       this.controller.setDifficulty(d);
       console.info('[Menu] startGame 完成，当前难度=' + this.controller.difficulty);
@@ -66,20 +80,23 @@ struct Index {
   }
 
   private newGame(): void {
-    this.setMenu(false);
     this.gameOver = false;
     this.controller.restart();
   }
 
-  /** 菜单开合：同时同步棋盘输入锁，菜单打开时棋盘不吃触摸 */
-  private setMenu(open: boolean): void {
-    this.menuOpen = open;
-    this.controller.inputLocked = open;
+  /** 退出应用（对应原版菜单的「退出」） */
+  private exitApp(): void {
+    try {
+      const ability = getContext(this) as common.UIAbilityContext;
+      ability.terminateSelf();
+    } catch (err) {
+      console.error('[Index] 退出应用失败: ' + (err as Error).message);
+    }
   }
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      // 棋盘
+      // 棋盘（菜单栏与对话框都画在这个画布上）
       Column() {
         MinefieldCanvas()
           .width('100%')
@@ -87,97 +104,9 @@ struct Index {
       }
       .width('100%')
       .height('100%')
-
-      // 左上角菜单按钮（放在棋盘外的空白角上）
-      Stack({ alignContent: Alignment.TopStart }) {
-        Button('≡')
-          .width(40)
-          .height(40)
-          .fontSize(22)
-          .fontColor('#2b3550')
-          .backgroundColor('#e8ecf4')
-          .borderRadius(20)
-          .margin({ top: 18, left: 18 })
-          .onClick(() => {
-            this.setMenu(!this.menuOpen);
-          })
-      }
-      .width('100%')
-      .height('100%')
-      .hitTestBehavior(HitTestMode.Transparent)
-
-      // 菜单面板
-      if (this.menuOpen) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          // 菜单面板（自身保持默认命中模式）
-          // 【踩坑】不能在这里铺一层全屏 hitTestBehavior(Block) 遮罩：
-          // 遮罩会和面板里的条目抢同一次点击，条目就随机失灵。
-          // 改成「菜单打开时锁住棋盘输入」（controller.inputLocked），棋盘不会误被点到。
-          Column() {
-          Text('扫雷')
-            .fontSize(16)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#2b3550')
-            .margin({ bottom: 8 })
-          Text('新游戏')
-            .fontSize(15)
-            .fontColor('#2b3550')
-            .width('100%')
-            .padding({ top: 8, bottom: 8 })
-            .textAlign(TextAlign.Center)
-            .onClick(() => {
-              this.newGame();
-            })
-          Divider().color('#c3cadb')
-          Text('初级 9×9')
-            .fontSize(15)
-            .fontColor(this.controller.difficulty === Difficulty.Beginner ? '#1d5fd0' : '#2b3550')
-            .width('100%')
-            .padding({ top: 8, bottom: 8 })
-            .textAlign(TextAlign.Center)
-            .onClick(() => {
-              console.info('[Menu] 点击 初级 9x9');
-              this.startGame(Difficulty.Beginner);
-            })
-          Text('中级 16×16')
-            .fontSize(15)
-            .fontColor(this.controller.difficulty === Difficulty.Intermediate ? '#1d5fd0' : '#2b3550')
-            .width('100%')
-            .padding({ top: 8, bottom: 8 })
-            .textAlign(TextAlign.Center)
-            .onClick(() => {
-              console.info('[Menu] 点击 中级 16x16');
-              this.startGame(Difficulty.Intermediate);
-            })
-          Text('高级 16×30')
-            .fontSize(15)
-            .fontColor(this.controller.difficulty === Difficulty.Expert ? '#1d5fd0' : '#2b3550')
-            .width('100%')
-            .padding({ top: 8, bottom: 8 })
-            .textAlign(TextAlign.Center)
-            .onClick(() => {
-              console.info('[Menu] 点击 高级 16x30');
-              this.startGame(Difficulty.Expert);
-            })
-        }
-        .width(150)
-        .padding({ top: 14, bottom: 14, left: 6, right: 6 })
-        .backgroundColor('#eef1f7')
-        .borderRadius(10)
-        .margin({ top: 66, left: 18 })
-        .shadow({ radius: 8, color: '#40000000', offsetX: 0, offsetY: 2 })
-        }
-        .width('100%')
-        .height('100%')
-        .hitTestBehavior(HitTestMode.Transparent)
-      }
-
-      // 结束对话框不再用 ArkUI 面板：原版 Win7 风格的对话框直接画在画布上
-      // （见 common/WinDialog.ets），这里只保留一个空壳避免误触。
     }
     .width('100%')
     .height('100%')
     .backgroundColor('#c6cede')
   }
 }
-

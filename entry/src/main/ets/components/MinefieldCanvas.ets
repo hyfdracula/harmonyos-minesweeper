@@ -65,6 +65,9 @@ export struct MinefieldCanvas {
   /** 双指捏合状态 */
   private pinchActive: boolean = false;
   private pinchDist: number = 0;
+  /** 手势起点的两指间距与当时的缩放档位（用于算累计缩放倍率） */
+  private pinchStartDist: number = 0;
+  private pinchStartScale: number = 3;
   private pinchMidX: number = 0;
   private pinchMidY: number = 0;
 
@@ -165,9 +168,16 @@ export struct MinefieldCanvas {
         return;
       }
       if (this.pinchActive) {
-        // 双指抬起一根：结束捏合，这次手势不再当点击
+        // 双指抬起一根：结束捏合，并把拖动原点重设到剩下的那根手指上
+        // （坑，Codex 复审 P2）：不重设的话，之后那一小段移动会按最初按下点算位移，
+        // 棋盘会被整个捏合的位移量甩出去。
         this.pinchActive = false;
         this.moved = true;
+        if (touches.length > 0) {
+          const t = touches[0];
+          this.downX = t.x * this.density;
+          this.downY = t.y * this.density;
+        }
         return;
       }
       if (event.type === TouchType.Down) {
@@ -236,20 +246,21 @@ export struct MinefieldCanvas {
     const midY = (ay + by) / 2;
 
     if (!this.pinchActive) {
+      // 记录手势起点：后续按「起点间距 → 当前间距」算总倍率
       this.pinchActive = true;
       this.pinchDist = dist;
+      this.pinchStartDist = dist;
+      this.pinchStartScale = this.controller.scaleIndex;
       this.pinchMidX = midX;
       this.pinchMidY = midY;
       return;
     }
-    const prevDist = this.pinchDist;
-    if (prevDist > 1) {
-      const factor = dist / prevDist;
-      if (Math.abs(factor - 1) > 0.02) {
-        const cur = this.controller.scaleIndex;
-        this.controller.zoomTo(cur * factor, midX, midY);
-        console.info('[Touch] 捏合 档位n=' + this.controller.scaleIndex + ' 间距=' + Math.round(dist));
-      }
+    // 坑（Codex 复审 P1）：不能每次 move 只用 dist/prevDist 再取整——
+    // 渐进捏合（比如每次放大 5%）每轮都被吸附回原档位，永远放大不了。
+    // 必须以手势起点的间距和档位为基准，算累计倍率。
+    if (this.pinchStartDist > 1) {
+      const target = this.pinchStartScale * (dist / this.pinchStartDist);
+      this.controller.zoomTo(target, midX, midY);
     }
     // 中点位移 → 平移
     this.controller.panBy(midX - this.pinchMidX, midY - this.pinchMidY);
@@ -269,6 +280,18 @@ export struct MinefieldCanvas {
       if (action !== null) {
         console.info('[Dialog] 点击按钮 ' + action);
         const cb = this.controller.onDialogAction;
+        if (cb !== null) {
+          cb(action);
+        }
+      }
+      return;
+    }
+    // 菜单栏：菜单开着时优先吃菜单上的点击
+    if (this.controller.menuOpenId.length > 0 || this.controller.isOnMenuBar(px, py)) {
+      const action = this.controller.menuActionAt(px, py);
+      if (action.length > 0) {
+        console.info('[Menu] 菜单动作 ' + action);
+        const cb = this.controller.onMenuAction;
         if (cb !== null) {
           cb(action);
         }

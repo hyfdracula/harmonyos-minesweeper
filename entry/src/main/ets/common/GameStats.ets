@@ -6,6 +6,9 @@
  *
  * 坑（2026-10-31）：ArkTS 的静态方法里不允许用 this（arkts-no-standalone-this），
  *    所以这里一律写类名 GameStats.xxx。
+ *
+ * 坑（Codex 复审 P2）：最快纪录必须**按难度分开存**，
+ *    否则初级跑出的成绩会被当成高级的纪录显示。
  */
 
 import { preferences } from '@kit.ArkData';
@@ -18,12 +21,12 @@ export class GameStats {
   static played: number = 0;
   /** 已获胜局数 */
   static won: number = 0;
-  /** 最快用时（秒）；-1 表示还没有纪录 */
-  static bestSeconds: number = -1;
-  /** 最快纪录的日期文本 */
-  static bestDate: string = '';
 
   private static store: preferences.Preferences | null = null;
+  /** 各难度的最快用时（秒）；key = 难度名，缺省表示没有纪录 */
+  private static bestSeconds: Map<string, number> = new Map();
+  /** 各难度最快纪录的日期文本 */
+  private static bestDate: Map<string, string> = new Map();
 
   /** 读取存档（异步，失败不阻塞游戏） */
   static async load(ctx: common.UIAbilityContext): Promise<void> {
@@ -31,25 +34,32 @@ export class GameStats {
       GameStats.store = await preferences.getPreferences(ctx, { name: STORE_NAME });
       const p: number = Number(await GameStats.store.get('played', 0));
       const w: number = Number(await GameStats.store.get('won', 0));
-      const b: number = Number(await GameStats.store.get('bestSeconds', -1));
-      const d: string = String(await GameStats.store.get('bestDate', ''));
       GameStats.played = p;
       GameStats.won = w;
-      GameStats.bestSeconds = b;
-      GameStats.bestDate = d;
+      for (const level of GameStats.levels()) {
+        const s: number = Number(await GameStats.store.get('best_' + level, -1));
+        const d: string = String(await GameStats.store.get('bestDate_' + level, ''));
+        if (s >= 0) {
+          GameStats.bestSeconds.set(level, s);
+        }
+        if (d.length > 0) {
+          GameStats.bestDate.set(level, d);
+        }
+      }
     } catch (err) {
       console.error('[GameStats] 读取存档失败: ' + (err as Error).message);
     }
   }
 
-  /** 记录一局结束 */
-  static async record(won: boolean, seconds: number): Promise<void> {
+  /** 记录一局结束（level = 难度名） */
+  static async record(won: boolean, seconds: number, level: string): Promise<void> {
     GameStats.played += 1;
     if (won) {
       GameStats.won += 1;
-      if (GameStats.bestSeconds < 0 || seconds <= GameStats.bestSeconds) {
-        GameStats.bestSeconds = seconds;
-        GameStats.bestDate = GameStats.nowText();
+      const cur = GameStats.bestSeconds.get(level);
+      if (cur === undefined || seconds <= cur) {
+        GameStats.bestSeconds.set(level, seconds);
+        GameStats.bestDate.set(level, GameStats.nowText());
       }
     }
     await GameStats.save();
@@ -63,12 +73,32 @@ export class GameStats {
     return Math.round((GameStats.won * 100) / GameStats.played);
   }
 
-  /** 最快用时文本；没有纪录时返回空串 */
-  static get bestText(): string {
-    if (GameStats.bestSeconds < 0) {
+  /** 指定难度的最快用时（秒）；没有纪录时返回 -1 */
+  static bestSecondsOf(level: string): number {
+    const s = GameStats.bestSeconds.get(level);
+    return s === undefined ? -1 : s;
+  }
+
+  /** 指定难度的最快用时文本；没有纪录时返回空串 */
+  static bestTextOf(level: string): string {
+    const s = GameStats.bestSeconds.get(level);
+    if (s === undefined) {
       return '';
     }
-    return GameStats.bestSeconds + '秒';
+    return s + '秒';
+  }
+
+  /** 指定难度的最快纪录日期 */
+  static bestDateOf(level: string): string {
+    const d = GameStats.bestDate.get(level);
+    return d === undefined ? '' : d;
+  }
+
+  /** 当前难度名（用于查询纪录） */
+  static level: string = '初级';
+
+  private static levels(): string[] {
+    return ['初级', '中级', '高级'];
   }
 
   private static async save(): Promise<void> {
@@ -79,8 +109,16 @@ export class GameStats {
     try {
       await store.put('played', GameStats.played);
       await store.put('won', GameStats.won);
-      await store.put('bestSeconds', GameStats.bestSeconds);
-      await store.put('bestDate', GameStats.bestDate);
+      for (const level of GameStats.levels()) {
+        const s = GameStats.bestSeconds.get(level);
+        if (s !== undefined) {
+          await store.put('best_' + level, s);
+        }
+        const d = GameStats.bestDate.get(level);
+        if (d !== undefined) {
+          await store.put('bestDate_' + level, d);
+        }
+      }
       await store.flush();
     } catch (err) {
       console.error('[GameStats] 写存档失败: ' + (err as Error).message);

@@ -116,6 +116,49 @@ export class WinDialogPainter {
   }
 
   /**
+   * 「最佳成绩」对话框（菜单 游戏 → 最佳成绩）
+   */
+  static bestSpec(seconds: number, played: number, won: number, percent: number,
+    bestText: string): DlgSpec {
+    const lines: DlgLine[] = [];
+    lines.push({ text: '最佳成绩', x: 190, y: 44, size: 14, align: 'center' });
+    lines.push({ text: '最快时间: ' + (bestText.length > 0 ? bestText : '暂无纪录'), x: 30, y: 92, size: 12, align: 'left' });
+    lines.push({ text: '本次用时: ' + seconds + '秒', x: 30, y: 120, size: 12, align: 'left' });
+    lines.push({ text: '已玩游戏: ' + played, x: 30, y: 148, size: 12, align: 'left' });
+    lines.push({ text: '已胜游戏: ' + won, x: 30, y: 176, size: 12, align: 'left' });
+    lines.push({ text: '百分比: ' + percent + '%', x: 30, y: 204, size: 12, align: 'left' });
+    return {
+      title: '最佳成绩',
+      width: 380,
+      height: 290,
+      lines: lines,
+      buttons: [
+        { id: 'close', label: '确定', x: 140, y: 238, w: 100, h: 26 }
+      ]
+    };
+  }
+
+  /**
+   * 「关于扫雷」对话框（菜单 帮助 → 关于扫雷）
+   */
+  static aboutSpec(): DlgSpec {
+    return {
+      title: '关于扫雷',
+      width: 360,
+      height: 250,
+      lines: [
+        { text: '扫雷', x: 180, y: 44, size: 16, align: 'center' },
+        { text: 'Windows 7 扫雷的 HarmonyOS 移植版', x: 180, y: 86, size: 12, align: 'center' },
+        { text: '单指点击开格，长按插旗，双击和弦，', x: 180, y: 116, size: 12, align: 'center' },
+        { text: '双指捏合缩放，单指拖动平移', x: 180, y: 138, size: 12, align: 'center' }
+      ],
+      buttons: [
+        { id: 'close', label: '确定', x: 130, y: 196, w: 100, h: 26 }
+      ]
+    };
+  }
+
+  /**
    * 画一个对话框。
    * @param sDev 参考像素 → 设备像素（用于字号）
    * @param sVp  参考像素 → vp（用于几何；= sDev / density）
@@ -219,6 +262,15 @@ export class WinDialogPainter {
       if (px >= bx && px <= bx + b.w * scale && py >= by && py <= by + b.h * scale) {
         return b.id;
       }
+    }
+    // 标题栏右上角的关闭按钮也要能点（它画出来了，就得能点）
+    // （Codex 复审 P2）
+    const cbW = 18 * scale;
+    const cbH = 14 * scale;
+    const cbX = ox + spec.width * scale - cbW - 4 * scale;
+    const cbY = oy + 3 * scale;
+    if (px >= cbX && px <= cbX + cbW && py >= cbY && py <= cbY + cbH) {
+      return 'close';
     }
     return null;
   }

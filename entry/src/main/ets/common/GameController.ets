@@ -16,6 +16,7 @@ import { SpriteAtlas } from './SpriteAtlas';
 import { WinDialogPainter, DlgSpec } from './WinDialog';
 import { GameStats } from './GameStats';
 import { SoundPlayer, Sound } from './SoundPlayer';
+import { WinMenuPainter, MenuSpec, MENU_BAR_H } from './WinMenu';
 import {
   TILE, MAX_SCALE_INDEX, FRAME_GAP_L, FRAME_GAP_T, FRAME_GAP_R, FRAME_GAP_B,
   gradientFrame, normalTileRect, pressedTileRect, RECT_FLAG, RECT_QUESTION, RECT_HILITE, RECT_MISFLAG,
@@ -99,6 +100,11 @@ export class GameController {
   private dialogScale: number = 1;
   private dialogOx: number = 0;
   private dialogOy: number = 0;
+
+  /** 当前展开的顶层菜单（'' = 全关） */
+  menuOpenId: string = '';
+  /** 菜单栏的菜单规格（随当前难度打勾而变） */
+  private menuSpec: MenuSpec = { tops: [] };
   /** 终局回调（页面用它弹结果面板） */
   onGameOver: ((won: boolean) => void) | null = null;
   /** 结束对话框按钮被点：'again' | 'menu' | 'exit' */
@@ -135,6 +141,8 @@ export class GameController {
     this.stopTimer();
     this.gameOverNotified = false;
     this.dialog = null;
+    this.menuOpenId = '';
+    this.buildMenu();
     // 新局回到「整盘刚好放下」的视角
     this.userZoomed = false;
     this.panX = 0;
@@ -209,20 +217,20 @@ export class GameController {
     this.boardY = this.frameY + FRAME_GAP_T * u;
   }
 
-  /** 平移量夹紧：棋盘不能被拖出画布；整盘放得下时不允许平移 */
+  /**
+   * 平移量夹紧：棋盘不能被拖出画布；整盘放得下时不允许平移。
+   *
+   * 坑（Codex 复审 P1）：frame 比画布大时 baseX 为负，**不能**直接把平移量归零——
+   * 那样高级局放大后就永远够不到边上的格子。正确做法是夹到 [-|baseX|, |baseX|]：
+   * 板子比视口大时允许拖动，且两边都能拖到。
+   */
   private clampPan(): void {
-    const halfW = (this.canvasW - this.frameW) / 2;
-    const halfH = (this.canvasH - this.frameH) / 2;
-    if (halfW <= 0) {
-      this.panX = 0;
-    } else {
-      this.panX = Math.max(-halfW, Math.min(halfW, this.panX));
-    }
-    if (halfH <= 0) {
-      this.panY = 0;
-    } else {
-      this.panY = Math.max(-halfH, Math.min(halfH, this.panY));
-    }
+    const baseX = (this.canvasW - this.frameW) / 2;
+    const baseY = (this.canvasH - this.frameH) / 2;
+    const limX = Math.abs(baseX);
+    const limY = Math.abs(baseY);
+    this.panX = Math.max(-limX, Math.min(limX, this.panX));
+    this.panY = Math.max(-limY, Math.min(limY, this.panY));
   }
 
   /** 缩放到指定档位（1..MAX_SCALE_INDEX），以画布坐标 (fx,fy)（设备像素）为锚点 */
@@ -291,6 +299,7 @@ export class GameController {
       this.drawBoardArea(ctx);
       this.drawBoard(ctx);
       this.drawStatusStrip(ctx);
+      this.drawMenu(ctx);
       this.drawDialog(ctx);
     } catch (err) {
       console.error('[GameController] 绘制失败: ' + (err as Error).message);
@@ -565,13 +574,17 @@ export class GameController {
 
   /** 生成结束对话框（原版 Win7 风格） */
   private buildDialog(won: boolean): void {
-    GameStats.record(won, this.seconds).catch(() => {
+    const cfg = GameController.configOf(this.difficulty);
+    GameStats.level = cfg.name;
+    GameStats.record(won, this.seconds, cfg.name).catch(() => {
       // 存档失败不影响对局
     });
-    const isNewBest = won && (GameStats.bestSeconds < 0 || this.seconds <= GameStats.bestSeconds);
+    const bestText = GameStats.bestTextOf(cfg.name);
+    const bestSec = GameStats.bestSecondsOf(cfg.name);
+    const isNewBest = won && (bestSec < 0 || this.seconds <= bestSec);
     if (won) {
       this.dialog = WinDialogPainter.winSpec(this.seconds, GameStats.played, GameStats.won,
-        GameStats.percent, GameStats.bestText, GameStats.bestDate, isNewBest);
+        GameStats.percent, bestText, GameStats.bestDateOf(cfg.name), isNewBest);
     } else {
       this.dialog = WinDialogPainter.loseSpec(this.seconds, GameStats.played, GameStats.won, GameStats.percent);
     }
@@ -602,6 +615,18 @@ export class GameController {
       this.v(this.dialogOx), this.v(this.dialogOy));
   }
 
+  /** 打开一个「菜单触发的」对话框（最佳成绩 / 关于） */
+  openInfoDialog(kind: string): void {
+    const cfg = GameController.configOf(this.difficulty);
+    if (kind === 'best') {
+      this.dialog = WinDialogPainter.bestSpec(this.seconds, GameStats.played, GameStats.won,
+        GameStats.percent, GameStats.bestTextOf(cfg.name));
+    } else {
+      this.dialog = WinDialogPainter.aboutSpec();
+    }
+    this.draw();
+  }
+
   /**
    * 点到结束对话框的按钮：返回动作标识，没点到返回 null。
    * 对话框打开时棋盘不接受点击。
@@ -618,6 +643,127 @@ export class GameController {
   /** 关闭结束对话框（比如重新开局时） */
   closeDialog(): void {
     this.dialog = null;
+    // 关掉对话框必须重画，否则画布上还留着上一帧的对话框
+    // （Codex 复审 P2）
+    this.draw();
+  }
+
+  // ------------------------------------------------------------------ 菜单栏
+
+  /** 生成菜单栏规格（当前难度打勾） */
+  private buildMenu(): void {
+    this.menuSpec = {
+      tops: [
+        {
+          id: 'game',
+          label: '游戏',
+          entries: [
+            { id: 'new', label: '新建', accelerator: 'F2' },
+            { id: 'sep1', label: '', separator: true },
+            { id: 'beginner', label: '初级', checked: this.difficulty === Difficulty.Beginner },
+            { id: 'intermediate', label: '中级', checked: this.difficulty === Difficulty.Intermediate },
+            { id: 'expert', label: '高级', checked: this.difficulty === Difficulty.Expert },
+            { id: 'sep2', label: '', separator: true },
+            { id: 'sound', label: '声音', checked: SoundPlayer.isEnabled },
+            { id: 'sep3', label: '', separator: true },
+            { id: 'best', label: '最佳成绩' },
+            { id: 'sep4', label: '', separator: true },
+            { id: 'exit', label: '退出', accelerator: 'X' }
+          ]
+        },
+        {
+          id: 'help',
+          label: '帮助',
+          entries: [
+            { id: 'about', label: '关于扫雷', accelerator: 'A' }
+          ]
+        }
+      ]
+    };
+  }
+
+  /** 菜单栏与下拉菜单的绘制 */
+  private drawMenu(ctx: CanvasRenderingContext2D): void {
+    const fontPx = 14 / this.pxScale;   // 14vp 字号换算成设备像素
+    const density = 1 / this.pxScale;
+    const wVp = this.v(this.canvasW);
+    const hVp = MENU_BAR_H;
+    WinMenuPainter.drawBar(ctx, this.menuSpec, fontPx, density, 0, 0, wVp, hVp, this.menuOpenId);
+    if (this.menuOpenId.length > 0) {
+      const top = this.menuSpec.tops.find((t) => t.id === this.menuOpenId);
+      if (top !== undefined) {
+        const x = WinMenuPainter.dropX(this.menuSpec, this.menuOpenId, fontPx, density, 0);
+        WinMenuPainter.drawDrop(ctx, top.entries, fontPx, x, hVp);
+      }
+    }
+  }
+
+  /** 点是否落在菜单栏上（含下拉面板） */
+  isOnMenuBar(px: number, py: number): boolean {
+    const pyVp = this.v(py);
+    if (pyVp <= MENU_BAR_H) {
+      return true;
+    }
+    if (this.menuOpenId.length === 0) {
+      return false;
+    }
+    const top = this.menuSpec.tops.find((t) => t.id === this.menuOpenId);
+    if (top === undefined) {
+      return false;
+    }
+    const fontPx = 14 / this.pxScale;
+    const density = 1 / this.pxScale;
+    const x = WinMenuPainter.dropX(this.menuSpec, this.menuOpenId, fontPx, density, 0);
+    // 下拉面板的高度：逐项累加
+    let h = 8;
+    for (const e of top.entries) {
+      h += e.separator ? 7 : 24;
+    }
+    const pxVp = this.v(px);
+    return pxVp >= x && pxVp <= x + 168 && pyVp >= MENU_BAR_H && pyVp <= MENU_BAR_H + h;
+  }
+
+  /** 菜单动作回调（页面处理） */
+  onMenuAction: ((action: string) => void) | null = null;
+
+  /** 菜单规格变了（比如声音开关）就重建并重画 */
+  refreshMenu(): void {
+    this.buildMenu();
+    this.draw();
+  }
+
+  /**
+   * 菜单栏命中测试：返回动作标识。
+   * @param px 设备像素 x
+   * @param py 设备像素 y
+   */
+  menuActionAt(px: number, py: number): string {    const fontPx = 14 / this.pxScale;
+    const density = 1 / this.pxScale;
+    const pxVp = this.v(px);
+    const pyVp = this.v(py);
+    // 下拉菜单优先（它在菜单栏之上）
+    if (this.menuOpenId.length > 0) {
+      const top = this.menuSpec.tops.find((t) => t.id === this.menuOpenId);
+      if (top !== undefined) {
+        const x = WinMenuPainter.dropX(this.menuSpec, this.menuOpenId, fontPx, density, 0);
+        const id = WinMenuPainter.entryHit(top.entries, x, MENU_BAR_H, pxVp, pyVp);
+        if (id.length > 0) {
+          return id;
+        }
+        // 点在下拉面板以外 → 关闭菜单
+        this.menuOpenId = '';
+        this.draw();
+        return '';
+      }
+    }
+    // 菜单栏上的顶层项
+    const topId = WinMenuPainter.topHit(this.menuSpec, fontPx, density, 0, 0, MENU_BAR_H, pxVp, pyVp);
+    if (topId.length > 0) {
+      this.menuOpenId = (this.menuOpenId === topId) ? '' : topId;
+      this.draw();
+      return '';
+    }
+    return '';
   }
 
   // ------------------------------------------------------------------ 计时

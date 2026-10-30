@@ -79,10 +79,18 @@ export class SoundPlayer {
       SoundPlayer.players.set(name, p);
       player = p;
     }
+    // 坑（Codex 复审 P1）：stop() 之后播放器停在 stopped 状态，
+    // seek(0) 不会把它变回 prepared，直接 play() 会失败（音效只能响一次）。
+    // 所以要 stop → prepare → seek(0) → play。
     try {
       await player.stop();
     } catch (err) {
       // 没播过就 stop 会抛错，忽略
+    }
+    try {
+      await player.prepare();
+    } catch (err) {
+      // 忽略
     }
     try {
       await player.seek(0);
