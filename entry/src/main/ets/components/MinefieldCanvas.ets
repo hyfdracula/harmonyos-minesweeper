@@ -274,6 +274,22 @@ export struct MinefieldCanvas {
    * 第一下点在已翻开的数字格上时引擎不做任何事，所以双击不会被第一下吃掉。
    */
   private handleTap(px: number, py: number): void {
+    // 统计信息窗口开着时，只吃它的点击
+    if (this.controller.statsOpen) {
+      const action = this.controller.statsButtonAt(px, py);
+      if (action === 'reset') {
+        console.info('[Stats] 点击重置');
+        GameStats.reset().then(() => {
+          this.controller.draw();
+        }).catch(() => {
+          this.controller.draw();
+        });
+      } else if (action === 'close') {
+        console.info('[Stats] 点击关闭');
+        this.controller.closeStats();
+      }
+      return;
+    }
     // 「自定义」对话框开着时，只吃它的点击
     if (this.controller.customSpec !== null) {
       this.controller.customActionAt(px, py);

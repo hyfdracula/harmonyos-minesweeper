@@ -259,8 +259,8 @@ export class DealIn {
   /**
    * 某一时刻哪些格已经弹起来了。
    *
-   * - false = 还没轮到（画压平底砖）
-   * - true  = 已经弹起（画正常凸起砖）
+   * - false = 还没轮到（画浅色压平底砖）
+   * - true  = 已经弹起（画深蓝方砖）
    *
    * @param elapsedMs 从本次发牌开始算起已经过的毫秒数
    * @param rows      棋盘行数

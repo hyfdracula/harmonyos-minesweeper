@@ -21,6 +21,14 @@ export class GameStats {
   static played: number = 0;
   /** 已获胜局数 */
   static won: number = 0;
+  /** 当前连胜（连续获胜局数） */
+  static currentStreak: number = 0;
+  /** 最多连胜 */
+  static maxStreak: number = 0;
+  /** 当前连败（内部用来算最多连败） */
+  static currentLoseStreak: number = 0;
+  /** 最多连败 */
+  static maxLoseStreak: number = 0;
 
   private static store: preferences.Preferences | null = null;
   /** 各难度的最快用时（秒）；key = 难度名，缺省表示没有纪录 */
@@ -36,6 +44,10 @@ export class GameStats {
       const w: number = Number(await GameStats.store.get('won', 0));
       GameStats.played = p;
       GameStats.won = w;
+      GameStats.currentStreak = Number(await GameStats.store.get('currentStreak', 0));
+      GameStats.maxStreak = Number(await GameStats.store.get('maxStreak', 0));
+      GameStats.currentLoseStreak = Number(await GameStats.store.get('currentLoseStreak', 0));
+      GameStats.maxLoseStreak = Number(await GameStats.store.get('maxLoseStreak', 0));
       for (const level of GameStats.levels()) {
         const s: number = Number(await GameStats.store.get('best_' + level, -1));
         const d: string = String(await GameStats.store.get('bestDate_' + level, ''));
@@ -56,12 +68,40 @@ export class GameStats {
     GameStats.played += 1;
     if (won) {
       GameStats.won += 1;
+      GameStats.currentStreak += 1;
+      GameStats.currentLoseStreak = 0;
+      if (GameStats.currentStreak > GameStats.maxStreak) {
+        GameStats.maxStreak = GameStats.currentStreak;
+      }
       const cur = GameStats.bestSeconds.get(level);
       if (cur === undefined || seconds <= cur) {
         GameStats.bestSeconds.set(level, seconds);
         GameStats.bestDate.set(level, GameStats.nowText());
       }
+    } else {
+      GameStats.currentStreak = 0;
+      GameStats.currentLoseStreak += 1;
+      if (GameStats.currentLoseStreak > GameStats.maxLoseStreak) {
+        GameStats.maxLoseStreak = GameStats.currentLoseStreak;
+      }
     }
+    await GameStats.save();
+  }
+
+  /**
+   * 重置全部成绩（原版统计窗口底部的「重置(R)」按钮）。
+   *
+   * 原版语义：清空局数、连胜连败与各难度的最好成绩。
+   */
+  static async reset(): Promise<void> {
+    GameStats.played = 0;
+    GameStats.won = 0;
+    GameStats.currentStreak = 0;
+    GameStats.maxStreak = 0;
+    GameStats.currentLoseStreak = 0;
+    GameStats.maxLoseStreak = 0;
+    GameStats.bestSeconds.clear();
+    GameStats.bestDate.clear();
     await GameStats.save();
   }
 
@@ -109,14 +149,22 @@ export class GameStats {
     try {
       await store.put('played', GameStats.played);
       await store.put('won', GameStats.won);
+      await store.put('currentStreak', GameStats.currentStreak);
+      await store.put('maxStreak', GameStats.maxStreak);
+      await store.put('currentLoseStreak', GameStats.currentLoseStreak);
+      await store.put('maxLoseStreak', GameStats.maxLoseStreak);
       for (const level of GameStats.levels()) {
         const s = GameStats.bestSeconds.get(level);
         if (s !== undefined) {
           await store.put('best_' + level, s);
+        } else {
+          await store.delete('best_' + level);
         }
         const d = GameStats.bestDate.get(level);
         if (d !== undefined) {
           await store.put('bestDate_' + level, d);
+        } else {
+          await store.delete('bestDate_' + level);
         }
       }
       await store.flush();

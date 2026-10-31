@@ -21,6 +21,8 @@ import { CustomField, CustomSpec, DLG_W, DLG_H } from './CustomField';
 import { NumKeypad } from './NumKeypad';
 import { Anim } from './Anim';
 import { Ripple, RippleStep } from './Ripple';
+import { StatsWindowPainter, StatsData, StatsLevel } from './StatsWindow';
+import { DealIn } from './DealIn';
 import {
   TILE, MAX_SCALE_INDEX, FRAME_GAP_L, FRAME_GAP_T, FRAME_GAP_R, FRAME_GAP_B,
   gradientFrame, normalTileRect, pressedTileRect, RECT_FLAG, RECT_QUESTION, RECT_HILITE, RECT_MISFLAG,
@@ -98,7 +100,15 @@ export class GameController {
   panY: number = 0;
 
   /** 菜单打开时为 true：棋盘不吃触摸，避免菜单与棋盘抢点击 */
-  inputLocked: boolean = false;
+  /**
+   * 有对话框/统计窗口开着时，棋盘不接受拖动与缩放。
+   *
+   * （原来这是一个没人写的字段，等于没锁；改成派生属性后，
+   *   结束对话框、自定义对话框、统计窗口开着时拖动棋盘都不会误触。）
+   */
+  get inputLocked(): boolean {
+    return this.dialog !== null || this.customSpec !== null || this.statsOpen;
+  }
   /** 结束对话框（原版 Win7 风格）；null 表示没开 */
   dialog: DlgSpec | null = null;
   private dialogScale: number = 1;
@@ -179,6 +189,8 @@ export class GameController {
     this.panY = 0;
     this.layout();
     this.draw();
+    // 新局的发牌动画（方砖从四角一波波弹起）
+    this.startDealIn();
     if (!silent) {
       SoundPlayer.play(Sound.GAME_START);
     }
@@ -335,6 +347,7 @@ export class GameController {
       this.drawMenu(ctx);
       this.drawCustom(ctx);
       this.drawDialog(ctx);
+      this.drawStats(ctx);
     } catch (err) {
       console.error('[GameController] 绘制失败: ' + (err as Error).message);
     }
@@ -454,7 +467,12 @@ export class GameController {
           }
         } else {
           const frame = gradientFrame(r, c, e.rowCount, e.colCount);
-          this.atlas.drawLogical(ctx, this.atlas.boardSheet, normalTileRect(frame), x, y, u);
+          if (this.dealCellUp(idx)) {
+            this.atlas.drawLogical(ctx, this.atlas.boardSheet, normalTileRect(frame), x, y, u);
+          } else {
+            // 发牌动画中：还没弹起的格画成压平的底砖
+            this.atlas.drawLogical(ctx, this.atlas.boardSheet, pressedTileRect(frame), x, y, u);
+          }
           if (cell.mark === Mark.Flag) {
             this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_FLAG, x, y, u);
           } else if (cell.mark === Mark.Question) {
@@ -509,6 +527,51 @@ export class GameController {
     const barH = Math.round(62 * u);
     this.atlas.draw(ctx, this.atlas.otherSheet, Anim.SCAN_BAR,
       this.boardX, barY, boardW, barH);
+  }
+
+  // ------------------------------------------------------------ 新局发牌动画
+
+  /**
+   * 新局发牌动画（原版：整盘先压平，方砖从四个角一波波弹起，总时长 1100ms）。
+   *
+   * 顺序与时刻的依据见 DealIn.ets 的文件头。
+   */
+  private dealFlags: boolean[] = [];
+  private dealStart: number = 0;
+  private dealTimer: number = -1;
+
+  private startDealIn(): void {
+    this.stopDealIn();
+    const e = this.engine;
+    if (e.rowCount <= 0 || e.colCount <= 0) {
+      return;
+    }
+    this.dealFlags = DealIn.frameAt(0, e.rowCount, e.colCount);
+    this.dealStart = Date.now();
+    this.dealTimer = setInterval(() => {
+      const elapsed = Date.now() - this.dealStart;
+      this.dealFlags = DealIn.frameAt(elapsed, e.rowCount, e.colCount);
+      if (elapsed >= DealIn.TOTAL_MS) {
+        this.stopDealIn();
+      }
+      this.draw();
+    }, 30);
+  }
+
+  private stopDealIn(): void {
+    if (this.dealTimer !== -1) {
+      clearInterval(this.dealTimer);
+      this.dealTimer = -1;
+    }
+    this.dealFlags = [];
+  }
+
+  /** 该格是否已经弹起（发牌动画中） */
+  private dealCellUp(idx: number): boolean {
+    if (this.dealFlags.length === 0) {
+      return true;
+    }
+    return this.dealFlags[idx] === true;
   }
 
   // ------------------------------------------------------------ 洪泛涟漪
@@ -947,20 +1010,101 @@ export class GameController {
   /** 打开一个「菜单触发的」对话框（最佳成绩 / 关于） */
   openInfoDialog(kind: string): void {
     if (kind === 'best') {
-      const rows: string[] = [];
-      for (const level of ['初级', '中级', '高级']) {
-        const t = GameStats.bestTextOf(level);
-        const d = GameStats.bestDateOf(level);
-        rows.push(level + '    ' + (t.length > 0 ? t : '暂无纪录') +
-          (d.length > 0 ? '    ' + d : ''));
-      }
-      this.dialog = WinDialogPainter.bestSpec(this.seconds, GameStats.played, GameStats.won,
-        GameStats.percent, rows);
+      // 原版的「最佳成绩」是独立的**扫雷统计信息窗口**（information.jpg 的版式）
+      this.openStatsWindow();
+      return;
     } else if (kind === 'help') {
       this.dialog = WinDialogPainter.helpSpec();
     } else {
       this.dialog = WinDialogPainter.aboutSpec();
     }
+    this.draw();
+  }
+
+  // ------------------------------------------------------------ 统计信息窗口
+
+  /** 统计信息窗口是否打开 */
+  statsOpen: boolean = false;
+  private statsScale: number = 1;
+  private statsOx: number = 0;
+  private statsOy: number = 0;
+
+  /** 打开统计信息窗口 */
+  openStatsWindow(): void {
+    this.statsOpen = true;
+    this.dialog = null;
+    this.menuOpenId = '';
+    this.draw();
+  }
+
+  /** 统计窗口当前的绘制参数 */
+  private statsLayout(): void {
+    // 参考像素 → 设备像素：按画布宽度取一个整数感舒服的倍数
+    const s = Math.max(1, Math.min(2, this.canvasW / 1500));
+    this.statsScale = s;
+    this.statsOx = Math.round((this.canvasW - StatsWindowPainter.width() * s) / 2);
+    this.statsOy = Math.round((this.canvasH - StatsWindowPainter.height() * s) / 2);
+  }
+
+  /** 统计窗口要显示的数据 */
+  private statsData(): StatsData {
+    const levels: StatsLevel[] = [];
+    for (const level of ['初级', '中级', '高级']) {
+      levels.push({ level: level, best: GameStats.bestSecondsOf(level), date: GameStats.bestDateOf(level) });
+    }
+    // 中栏「最佳时间」显示三个难度里最快的那条（最贴近 information.jpg）
+    let best = -1;
+    let bestDate = '';
+    for (const level of ['初级', '中级', '高级']) {
+      const s = GameStats.bestSecondsOf(level);
+      if (s >= 0 && (best < 0 || s < best)) {
+        best = s;
+        bestDate = GameStats.bestDateOf(level);
+      }
+    }
+    return {
+      bestSeconds: best,
+      bestDate: bestDate,
+      played: GameStats.played,
+      won: GameStats.won,
+      currentStreak: GameStats.currentStreak,
+      maxStreak: GameStats.maxStreak,
+      maxLoseStreak: GameStats.maxLoseStreak,
+      perLevel: levels
+    };
+  }
+
+  /** 画统计信息窗口 */
+  private drawStats(ctx: CanvasRenderingContext2D): void {
+    if (!this.statsOpen) {
+      return;
+    }
+    this.statsLayout();
+    StatsWindowPainter.draw(ctx, this.statsData(),
+      this.statsScale, this.statsScale * this.pxScale,
+      this.v(this.statsOx), this.v(this.statsOy));
+  }
+
+  /**
+   * 点到统计窗口的按钮：返回 'reset' / 'close' / null。
+   */
+  statsButtonAt(px: number, py: number): string | null {
+    if (!this.statsOpen) {
+      return null;
+    }
+    this.statsLayout();
+    if (StatsWindowPainter.hitReset(this.statsScale, this.statsOx, this.statsOy, px, py)) {
+      return 'reset';
+    }
+    if (StatsWindowPainter.hitClose(this.statsScale, this.statsOx, this.statsOy, px, py)) {
+      return 'close';
+    }
+    return null;
+  }
+
+  /** 关闭统计窗口 */
+  closeStats(): void {
+    this.statsOpen = false;
     this.draw();
   }
 
