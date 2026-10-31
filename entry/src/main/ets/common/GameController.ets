@@ -23,9 +23,9 @@ import { Anim } from './Anim';
 import {
   TILE, MAX_SCALE_INDEX, FRAME_GAP_L, FRAME_GAP_T, FRAME_GAP_R, FRAME_GAP_B,
   gradientFrame, normalTileRect, pressedTileRect, RECT_FLAG, RECT_QUESTION, RECT_HILITE, RECT_MISFLAG,
-  RECT_SHADOW_U, RECT_SHADOW_L, RECT_COUNTER, digitRect, RECT_MINE, RECT_PANEL_MINE, RECT_CLOCK, RECT_FACE,
+  RECT_SHADOW_U, RECT_SHADOW_L, RECT_COUNTER, digitRect, RECT_MINE, RECT_PANEL_MINE, RECT_CLOCK,
   COLOR_OUTSIDE, COLOR_FLOOR, COLOR_SUNKEN,
-  STRIP_BAND, STRIP_FACE_SIZE, STRIP_CLOCK_SIZE, STRIP_PANEL_W, STRIP_PANEL_H, STRIP_GAP, stripMargin
+  STRIP_BAND, STRIP_CLOCK_SIZE, STRIP_PANEL_W, STRIP_PANEL_H, STRIP_GAP, stripMargin
 } from './Theme';
 
 /** 难度档位（与原版一致） */
@@ -114,6 +114,8 @@ export class GameController {
   private customOy: number = 0;
   /** 是否允许插问号（原版「游戏 → 标记(?)」开关） */
   questionMarks: boolean = true;
+  /** 当前这局是不是「自定义」难度（自定义局不进统计） */
+  customGame: boolean = false;
   /** 终局回调（页面用它弹结果面板） */
   onGameOver: ((won: boolean) => void) | null = null;
   /** 结束对话框按钮被点：'again' | 'menu' | 'exit' */
@@ -134,6 +136,7 @@ export class GameController {
   /** 换难度并开新局 */
   setDifficulty(d: Difficulty): void {
     this.difficulty = d;
+    this.customGame = false;
     const cfg = GameController.configOf(d);
     this.startNewGame(cfg.rows, cfg.cols, cfg.mines);
   }
@@ -317,6 +320,7 @@ export class GameController {
       }
       this.drawBoardArea(ctx);
       this.drawBoard(ctx);
+      this.drawScanBar(ctx);
       this.drawStatusStrip(ctx);
       this.drawMenu(ctx);
       this.drawCustom(ctx);
@@ -410,14 +414,12 @@ export class GameController {
             this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_MINE, x, y, u);
             // 爆炸动画（只在踩中的那一格上播）
             if (Anim.tripActive && idx === Anim.tripCell) {
-              const rect = Anim.currentRect();
-              if (rect !== null) {
-                // 每帧大小不同，按格子中心对齐
-                const fw = rect[2] * u;
-                const fh = rect[3] * u;
-                this.atlas.draw(ctx, this.atlas.otherSheet, rect,
-                  x + (this.tile - fw) / 2, y + (this.tile - fh) / 2, fw, fh);
-              }
+              // 原版帧是 57x57 的整块（含溢出格子的部分），按原版偏移 (-18,-18) 画，
+              // 不能居中缩放，否则爆炸会缩水。
+              const rect = Anim.explodeRect(Anim.tripFrame);
+              this.atlas.draw(ctx, this.atlas.otherSheet, rect,
+                x + Anim.EXPLODE_OFFSET[0] * u, y + Anim.EXPLODE_OFFSET[1] * u,
+                rect[2] * u, rect[3] * u);
             }
           } else if (cell.mine) {
             // 判负时引擎把未插旗的雷全部翻开，这里补上雷
@@ -443,7 +445,11 @@ export class GameController {
             this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_MISFLAG, x, y, u);
           }
           if (idx === this.hoverIndex) {
+            // 悬停高亮：原版是**加法混合**（参考实现 Theme.h 注明 "The hilite is additive"），
+            // 这张精灵本身 100% 不透明，普通合成会把整格涂成深青色块。
+            ctx.globalCompositeOperation = 'lighter';
             this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_HILITE, x, y, u);
+            ctx.globalCompositeOperation = 'source-over';
           }
         }
       }
@@ -455,11 +461,47 @@ export class GameController {
    * 位置按原版反推：两组分别贴着棋盘的左右沿，留白随棋盘宽度缩放。
    */
   /**
-   * 状态条（真 Win7 顺序，依据微软自己的 helpBoard.png）：
+   * 画胜利动画的两样东西：
+   *   1) 拆雷光束（逐颗雷，光束自带那份方砖副本，会盖住格子上下）
+   *   2) 扫描条（自下而上扫过棋盘）
+   */
+  private drawScanBar(ctx: CanvasRenderingContext2D): void {
+    const u = this.unit;
+    // 1) 拆雷光束
+    for (let i = 0; i < Anim.beams.length; i++) {
+      const f = Anim.beamFrame(i);
+      if (f < 0) {
+        continue;
+      }
+      const cell = Anim.beams[i].cell;
+      const r = Math.floor(cell / this.engine.colCount);
+      const c = cell - r * this.engine.colCount;
+      const x = this.boardX + c * this.tile + Anim.DISARM_OFFSET[0] * u;
+      const y = this.boardY + r * this.tile + Anim.DISARM_OFFSET[1] * u;
+      this.atlas.drawLogical(ctx, this.atlas.otherSheet, Anim.disarmRect(f), x, y, u);
+    }
+    // 2) 扫描条
+    const barY = this.scanBarY();
+    if (barY < 0) {
+      return;
+    }
+    const boardW = this.engine.colCount * this.tile;
+    const barH = Math.round(62 * u);
+    this.atlas.draw(ctx, this.atlas.otherSheet, Anim.SCAN_BAR,
+      this.boardX, barY, boardW, barH);
+  }
+
+  /**
+   * 状态条。
    *
-   *     [笑脸][雷数面板] ················· [计时面板][雷图标]
+   * 真 Win7 的顺序（依据微软自己的 helpBoard.png，14 倍放大逐像素核对）：
    *
-   * 之前按某个复刻画成了 [时钟][计时面板]…[雷数面板][雷图标]，左右是反的。
+   *     [时钟][计时面板] ····················· [雷数面板][雷图标]
+   *
+   * 左边那个圆钮**是时钟不是笑脸**（盘面上有指针）；左边 LED 的「18」只能是计时，
+   * 右边 LED 的「-40」只能是雷数（雷数允许为负，这个负号是关键证据）。
+   * 这与 Lmy0217 复刻的绘制代码完全一致：它的时钟图标取自 Frame.bmp 左上角，
+   * 画在棋盘下沿的左端，计时面板紧跟其右；雷数面板与雷图标在右端。
    */
   private drawStatusStrip(ctx: CanvasRenderingContext2D): void {
     const u = this.unit;
@@ -468,22 +510,21 @@ export class GameController {
     const boardRight = this.boardX + e.colCount * this.tile;
     const margin = stripMargin(e.colCount) * u;
 
-    // 左端：笑脸 + 雷数面板
-    const faceX = this.boardX + margin;
-    const faceY = boardBottom + Math.round((STRIP_BAND - STRIP_FACE_SIZE) / 2) * u;
-    const mineX = faceX + (STRIP_FACE_SIZE + STRIP_GAP) * u;
-    const mineY = boardBottom + Math.round((STRIP_BAND - STRIP_PANEL_H) / 2) * u;
-
-    // 右端：计时面板 + 雷图标
-    const iconX = boardRight - margin - STRIP_CLOCK_SIZE * u;
-    const iconY = boardBottom + Math.round((STRIP_BAND - STRIP_CLOCK_SIZE) / 2) * u;
-    const timeX = iconX - (STRIP_GAP + STRIP_PANEL_W) * u;
+    // 左端：时钟 + 计时面板
+    const clockX = this.boardX + margin;
+    const clockY = boardBottom + Math.round((STRIP_BAND - STRIP_CLOCK_SIZE) / 2) * u;
+    const timeX = clockX + (STRIP_CLOCK_SIZE + STRIP_GAP) * u;
     const timeY = boardBottom + Math.round((STRIP_BAND - STRIP_PANEL_H) / 2) * u;
 
-    this.atlas.drawRaw(ctx, this.atlas.faceSheet, RECT_FACE,
-      faceX, faceY, STRIP_FACE_SIZE * u, STRIP_FACE_SIZE * u);
-    this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, mineX, mineY, u);
+    // 右端：雷数面板 + 雷图标
+    const iconX = boardRight - margin - STRIP_CLOCK_SIZE * u;
+    const iconY = boardBottom + Math.round((STRIP_BAND - STRIP_CLOCK_SIZE) / 2) * u;
+    const mineX = iconX - (STRIP_GAP + STRIP_PANEL_W) * u;
+    const mineY = boardBottom + Math.round((STRIP_BAND - STRIP_PANEL_H) / 2) * u;
+
+    this.atlas.drawLogical(ctx, this.atlas.otherSheet, RECT_CLOCK, clockX, clockY, u);
     this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, timeX, timeY, u);
+    this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, mineX, mineY, u);
     this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_PANEL_MINE, iconX, iconY, u);
 
     // 字号单位：Canvas 的 font 里 "px" 是**设备像素**（与画布坐标的 vp 不是一回事，
@@ -492,8 +533,8 @@ export class GameController {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#ffffff';
-    ctx.fillText(`${e.minesRemaining()}`, this.v(mineX + STRIP_PANEL_W * u / 2), this.v(mineY + STRIP_PANEL_H * u / 2));
     ctx.fillText(`${this.seconds}`, this.v(timeX + STRIP_PANEL_W * u / 2), this.v(timeY + STRIP_PANEL_H * u / 2));
+    ctx.fillText(`${e.minesRemaining()}`, this.v(mineX + STRIP_PANEL_W * u / 2), this.v(mineY + STRIP_PANEL_H * u / 2));
   }
 
   // ------------------------------------------------------------------ 交互
@@ -526,11 +567,17 @@ export class GameController {
     const outcome = e.reveal(r, c);
     if (outcome.changed) {
       if (outcome.lost) {
-        // 踩雷：原版是三段爆炸声
-        SoundPlayer.playSequence([Sound.BOMB_START, Sound.BOMB_RUN, Sound.BOMB_END], 260);
+        // 踩雷：原版是「爆炸开始 → 爆炸中(循环) → 爆炸结束」三段。
+        // 参考实现：爆炸动画 25 帧 × 23ms = 575ms，动画结束后循环播爆炸中音，最后播结束音。
+        // 本项目动画 8 帧 × 70ms = 560ms，与原版动画时长基本一致。
+        SoundPlayer.play(Sound.BOMB_START);
+        this.playBombTail();
       } else if (wasReady) {
         // 第一下：原版播 firstPaint（不是 tileSingle）
         SoundPlayer.play(Sound.FIRST_PAINT);
+      } else if (e.cellAt(r, c).adjacent === 0) {
+        // 0 格展开：原版用 zeroDevelop 这一声
+        SoundPlayer.play(Sound.ZERO_DEVELOP);
       } else if (outcome.opened.length > 1) {
         SoundPlayer.play(Sound.TILE_MULTIPLE);
       } else {
@@ -616,12 +663,60 @@ export class GameController {
         this.startAnimTimer();
         return;
       }
+    } else {
+      // 胜利：扫描条自下而上扫过棋盘，各行的雷依次被拆解光束烧掉，
+      // 扫完之后才弹胜利对话框（原版如此）
+      this.startWinSweep();
+      return;
     }
     this.buildDialog(won);
     const cb = this.onGameOver;
     if (cb !== null) {
       cb(won);
     }
+  }
+
+  /**
+   * 胜利动画：扫描条扫过 + 逐行拆雷光束。
+   *
+   * 原版（MineDisarm.xml + 扫描条）：扫描条自下而上扫过棋盘（3 秒），
+   * 扫到某一行时，那一行的雷开始播放拆解光束（38 帧 / 2 秒），
+   * 全部结束后才弹胜利对话框。
+   */
+  private startWinSweep(): void {
+    const e = this.engine;
+    const cells: number[] = [];
+    const times: number[] = [];
+    const barH = 62; // 扫描条高度（逻辑单位）
+    for (let r = 0; r < e.rowCount; r++) {
+      for (let c = 0; c < e.colCount; c++) {
+        if (!e.cellAt(r, c).mine) {
+          continue;
+        }
+        const mineY = this.boardY + r * this.tile; // 设备像素
+        const boardBottom = this.boardY + e.rowCount * this.tile;
+        const boardH = e.rowCount * this.tile;
+        // 扫描条的下沿自 boardBottom 往上走，扫到这一行时进度是多少
+        const crossed = (boardBottom - mineY) / Math.max(1, boardH);
+        cells.push(r * e.colCount + c);
+        times.push(Math.max(0, Math.min(1, crossed)) * Anim.SWEEP_MS);
+      }
+    }
+    Anim.startWin(cells, times);
+    this.startAnimTimer();
+  }
+
+  /** 扫描条当前的位置（设备像素）；不在扫就返回 -1 */
+  private scanBarY(): number {
+    if (!Anim.winActive) {
+      return -1;
+    }
+    const e = this.engine;
+    const boardBottom = this.boardY + e.rowCount * this.tile;
+    const boardH = e.rowCount * this.tile;
+    const p = Math.min(1, Anim.winElapsed / Anim.SWEEP_MS);
+    const barH = 62 * (this.tile / 18); // 扫描条按格子比例缩放
+    return boardBottom - p * (boardH + barH) - barH;
   }
 
   /** 找出踩中的那颗雷的格索引（没有就 -1） */
@@ -637,26 +732,52 @@ export class GameController {
     return -1;
   }
 
-  /** 动画定时器（爆炸动画用，比计时器快得多） */
+  /**
+   * 爆炸音的后两段。
+   *
+   * 原版时序（参考实现的 mineBomb 函数）：
+   *   1) 爆炸开始音（一次性）
+   *   2) 爆炸动画 25 帧 × 23ms = 575ms
+   *   3) 爆炸中音，**循环**播放，同时其它雷逐个烧红
+   *   4) 爆炸结束音
+   * 各 wav 实测时长：mineBombStart 1.294s / mineBombRun 3.949s / mineBombEnd 1.951s。
+   */
+  private playBombTail(): void {
+    setTimeout(() => {
+      SoundPlayer.play(Sound.BOMB_RUN);
+      setTimeout(() => {
+        SoundPlayer.play(Sound.BOMB_END);
+      }, 3949);
+    }, 575);
+  }
+
+  /** 动画定时器（爆炸/胜利动画用，比计时器快得多） */
   private animHandle: number = -1;
+  /** 动画上一帧的时刻（ms） */
+  private animLast: number = 0;
 
   private startAnimTimer(): void {
     if (this.animHandle !== -1) {
       return;
     }
+    this.animLast = Date.now();
     this.animHandle = setInterval(() => {
-      const more = Anim.tick();
+      const now = Date.now();
+      const dt = now - this.animLast;
+      this.animLast = now;
+      const more = Anim.tick(dt);
       this.draw();
       if (!more) {
         this.stopAnimTimer();
         // 动画放完，弹结束对话框
-        this.buildDialog(false);
+        const won = this.engine.gameState === GameState.Won;
+        this.buildDialog(won);
         const cb = this.onGameOver;
         if (cb !== null) {
-          cb(false);
+          cb(won);
         }
       }
-    }, Anim.FRAME_MS);
+    }, 30);
   }
 
   private stopAnimTimer(): void {
@@ -672,12 +793,16 @@ export class GameController {
   private buildDialog(won: boolean): void {
     const cfg = GameController.configOf(this.difficulty);
     GameStats.level = cfg.name;
-    GameStats.record(won, this.seconds, cfg.name).catch(() => {
-      // 存档失败不影响对局
-    });
+    // 自定义局**不进统计**：原版 Win7 的自定义局既不记最好成绩，
+    // 也不计入「已玩游戏/已胜游戏」（见 linux 复刻 MainWindow.cpp:236-238 的注释）。
+    if (!this.customGame) {
+      GameStats.record(won, this.seconds, cfg.name).catch(() => {
+        // 存档失败不影响对局
+      });
+    }
     const bestText = GameStats.bestTextOf(cfg.name);
     const bestSec = GameStats.bestSecondsOf(cfg.name);
-    const isNewBest = won && (bestSec < 0 || this.seconds <= bestSec);
+    const isNewBest = !this.customGame && won && (bestSec < 0 || this.seconds <= bestSec);
     if (won) {
       this.dialog = WinDialogPainter.winSpec(this.seconds, GameStats.played, GameStats.won,
         GameStats.percent, bestText, GameStats.bestDateOf(cfg.name), isNewBest);
@@ -732,6 +857,8 @@ export class GameController {
       }
       this.dialog = WinDialogPainter.bestSpec(this.seconds, GameStats.played, GameStats.won,
         GameStats.percent, rows);
+    } else if (kind === 'help') {
+      this.dialog = WinDialogPainter.helpSpec();
     } else {
       this.dialog = WinDialogPainter.aboutSpec();
     }
@@ -802,6 +929,8 @@ export class GameController {
       if (hit === 'ok') {
         const s = CustomField.clampSpec(spec);
         this.customSpec = null;
+        // 自定义局：难度名不变，成绩不进统计（原版如此）
+        this.customGame = true;
         this.startNewGame(s.height, s.width, s.mines);
         this.draw();
         return '';
@@ -860,7 +989,7 @@ export class GameController {
       tops: [
         {
           id: 'game',
-          label: '游戏',
+          label: '游戏(G)',
           entries: [
             { id: 'new', label: '新建', accelerator: 'F2' },
             { id: 'sep1', label: '', separator: true },
@@ -879,8 +1008,10 @@ export class GameController {
         },
         {
           id: 'help',
-          label: '帮助',
+          label: '帮助(H)',
           entries: [
+            { id: 'help', label: '帮助(H)', accelerator: 'F1' },
+            { id: 'sep1', label: '', separator: true },
             { id: 'about', label: '关于扫雷', accelerator: 'A' }
           ]
         }

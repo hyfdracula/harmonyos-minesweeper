@@ -23,6 +23,8 @@ export class Sound {
   static readonly INVALID_MOVE: string = 'invalidMove';
   /** 第一下的那声（参考实现在「首点开格」时播的就是它，不是 tileSingle） */
   static readonly FIRST_PAINT: string = 'firstPaint';
+  /** 0 格展开（洪泛）的那声 */
+  static readonly ZERO_DEVELOP: string = 'zeroDevelop';
   static readonly FLAG: string = 'dbButtonClickFlag';
   static readonly BOMB_START: string = 'mineBombStart';
   static readonly BOMB_RUN: string = 'mineBombRun';
