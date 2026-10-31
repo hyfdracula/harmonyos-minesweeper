@@ -99,6 +99,21 @@ export const FRAME_GAP_T: number = 30;
 export const FRAME_GAP_R: number = 29;
 export const FRAME_GAP_B: number = 32;
 
+// ---- helpBoard.png（原版帮助窗口插图） --------------------------------------
+
+/**
+ * 原版帮助窗口插图的源尺寸（**像素，1 倍**）。
+ *
+ * 坑（最容易踩的一个）：helpBoard.png 是 **1:1** 的图，不像 blueSheet 那样按 2 倍存，
+ * 所以取它的源坐标时**不能乘 SPRITE_SCALE**，否则会从图里裁到错的地方
+ * （×2 会直接裁到图外，画出空白）。
+ *
+ * 这张图是微软自己的插图：一局进行中的 Win7 扫雷画面，底部带 [时钟][18] … [-40][雷] 状态条。
+ */
+export const HELP_BOARD_W: number = 256;
+export const HELP_BOARD_H: number = 192;
+
+
 /**
  * 砖块渐变帧映射：原版不是所有格子同一个蓝色，而是 720 帧（30×24）从左上到右下
  * 由亮到暗的渐变，每格取自己那一帧。小棋盘取「居中窗口」而不是拉伸整个渐变，

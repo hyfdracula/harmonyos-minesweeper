@@ -260,15 +260,27 @@ export class GameController {
         break;
       }
     }
-    // 装得下的那一档如果格子小到点不准，就往上抬**一档**，让棋盘横向超出画布，
+    // 装得下的那一档如果格子小到点不准，就往上抬一档，让棋盘横向超出画布，
     // 靠平移看（`clampPan` 本来就支持）。
     //
     // 为什么：30 列的局在窄屏（外屏 1323 px / Mate 90 Pro 1280 px）上宽度是几何必然，
     // 装得下的那一档只有 n=1（格边 36 px ≈ 10~13 vp），手指根本点不准。
     // 用户的原话是「外屏不接受降级，我希望可以拖动放大」——宁可超宽也要能点准。
-    // 抬一档后格边 72 px（≈20~26 vp），用单指平移就能看全。
+    //
+    // 坑（2026-10-31，LEAD-CHANGE-AUDIT 的 L1）：**不能无条件抬**。
+    // 抬一档会让棋盘同时纵向溢出，而纵向居中会把棋盘顶部推到菜单栏底下——
+    // 那几行既看不见也点不着（菜单栏的点击归菜单）。
+    // 所以抬档的前提是「抬完纵向仍然装得下」，或者「横向本来就装不下」
+    // （反正要平移，纵向溢出无所谓，只需顶对齐）。
     if (TILE * 2 * fit < MIN_CELL_PX && fit < MAX_SCALE_INDEX) {
-      fit = fit + 1;
+      const u2 = 2 * (fit + 1);
+      const bw2 = e.colCount * TILE * u2;
+      const bh2 = e.rowCount * TILE * u2 + STRIP_BAND * u2;
+      const fitsV = menuPx + bh2 <= this.canvasH;
+      const widthBinding = e.colCount * TILE * 2 * fit > this.canvasW;
+      if (fitsV || widthBinding) {
+        fit = fit + 1;
+      }
     }
     this.fitScaleIndex = fit;
     // 2) 用户没手动缩放过就用适配档；缩放过就保留用户的档位（折叠换屏时不丢视角）
@@ -304,8 +316,14 @@ export class GameController {
     this.frameW = boardW;
     this.frameH = boardH + STRIP_BAND * u;
     this.frameX = Math.round((this.canvasW - this.frameW) / 2) + this.panX;
-    this.frameY = this.menuBarPx() +
-      Math.round((this.canvasH - this.menuBarPx() - this.frameH) / 2) + this.panY;
+    // 纵向：从菜单栏下沿往下，把「棋盘 + 状态条」这一组在剩余空间里居中；
+    // 但**装不下时顶对齐**——居中会把顶部推到菜单栏底下，那几行既看不见也点不着
+    // （LEAD-CHANGE-AUDIT 的 L1）。
+    const availH: number = Math.max(1, this.canvasH - this.menuBarPx());
+    const frameYBase: number = this.frameH > availH
+      ? this.menuBarPx()
+      : this.menuBarPx() + Math.round((availH - this.frameH) / 2);
+    this.frameY = frameYBase + this.panY;
     this.boardX = this.frameX;
     this.boardY = this.frameY;
   }
@@ -1115,7 +1133,11 @@ export class GameController {
     const s = this.computeDialogScale(d.width, d.height);
     this.dialogScale = s;
     this.dialogOx = Math.round((this.canvasW - d.width * s) / 2);
-    this.dialogOy = Math.round((this.canvasH - d.height * s) / 2);
+    // 比画布还高时**顶对齐**：居中会让上下各露一半，底部按钮就够不着了
+    // （LEAD-CHANGE-AUDIT 的 L4）。
+    this.dialogOy = d.height * s > this.canvasH
+      ? 0
+      : Math.round((this.canvasH - d.height * s) / 2);
   }
 
   /** 画结束对话框 */
@@ -1180,7 +1202,10 @@ export class GameController {
     const s = this.computeDialogScale(StatsWindowPainter.width(), StatsWindowPainter.height());
     this.statsScale = s;
     this.statsOx = Math.round((this.canvasW - StatsWindowPainter.width() * s) / 2);
-    this.statsOy = Math.round((this.canvasH - StatsWindowPainter.height() * s) / 2);
+    // 比画布还高时顶对齐（底部按钮要够得着）
+    this.statsOy = StatsWindowPainter.height() * s > this.canvasH
+      ? 0
+      : Math.round((this.canvasH - StatsWindowPainter.height() * s) / 2);
   }
 
   /** 统计窗口要显示的数据 */
@@ -1286,7 +1311,7 @@ export class GameController {
     const totalW = dlgW + 12 * s + keyW;
     const totalH = Math.max(DLG_H * s, NumKeypad.height() * s);
     this.customOx = Math.round((this.canvasW - totalW) / 2);
-    this.customOy = Math.round((this.canvasH - totalH) / 2);
+    this.customOy = totalH > this.canvasH ? 0 : Math.round((this.canvasH - totalH) / 2);
   }
 
   /** 画「自定义」对话框与数字键盘 */

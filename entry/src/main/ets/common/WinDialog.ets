@@ -23,6 +23,9 @@
  *    而且 createLinearGradient 的返回值类型名在不同 SDK 版本下不稳定，故不写显式类型。
  */
 
+import { SpriteAtlas } from './SpriteAtlas';
+import { HELP_BOARD_W, HELP_BOARD_H } from './Theme';
+
 /** 对话框里的一行文字 */
 export interface DlgLine {
   text: string;
@@ -51,6 +54,21 @@ export interface DlgButton {
   borderColor?: string;
 }
 
+/**
+ * 对话框里的一幅整图（1:1 的源图，**不套 SPRITE_SCALE**）。
+ *
+ * 目前只有帮助窗口用它：左边放微软原版帮助窗口的插图 helpBoard.png。
+ */
+export interface DlgImage {
+  /** 源图宽（**源像素**，1:1 图） */
+  w: number;
+  /** 源图高（**源像素**） */
+  h: number;
+  /** 摆放位置（参考像素，相对对话框左上角） */
+  x: number;
+  y: number;
+}
+
 /** 一个对话框的全部描述 */
 export interface DlgSpec {
   title: string;
@@ -63,6 +81,8 @@ export interface DlgSpec {
   icon?: number[];
   /** 图标位置与尺寸（参考像素） */
   iconPos?: number[];
+  /** 可选：整图（画在 helpBoardSheet 上，1:1 图，源坐标不乘 SPRITE_SCALE） */
+  image?: DlgImage;
   /** 标题栏风格：'aero'（loss/win 的玻璃标题栏，默认）| 'classic'（about 的经典蓝灰标题栏） */
   chrome?: string;
 }
@@ -316,25 +336,42 @@ export class WinDialogPainter {
   /**
    * 帮助对话框（Win7 的「帮助(H)」菜单项）。
    *
-   * 原版点「帮助(H)」会弹出一个独立的帮助窗口（helpBoard.png 就是那个窗口的插图），
-   * 本项目没有独立窗口，用一个同风格的对话框承载同样的文字内容。
+   * 原版点「帮助(H)」会弹出一个独立的帮助窗口，helpBoard.png 就是那个窗口里的插图
+   * —— 微软自己画的一局进行中的扫雷画面（256x192，1:1 图，带底部状态条
+   * [时钟][18] … [-40][雷]）。本项目没有独立窗口，用一个同风格的对话框承载：
+   * **左边放原图，右边放中文说明**，底部保留「确定」。
+   *
+   * 参考尺寸 584x280（客户区 x=8..575 / y=29..271）：
+   *   原图   x=16..271 / y=37..228（256x192 原尺寸）
+   *   说明   x=288 起，y=67..189（6 行，行距 22，文字块与原图上下居中）
+   *   按钮   x=242..341 / y=241..266（「确定」在底部居中）
+   *
+   * 像素级：原图按**整数倍**放大（每个源像素占整数个设备像素），
+   * 放大倍数取 floor(对话框缩放倍数)，所以不会糊；详见 draw() 里那段注释。
    */
   static helpSpec(): DlgSpec {
     return {
       title: '扫雷 帮助',
-      width: 320,
-      height: 210,
+      width: 584,
+      height: 280,
       chrome: 'aero',
+      // 原版插图：helpBoard.png（1:1，源坐标不乘 SPRITE_SCALE）
+      image: {
+        w: HELP_BOARD_W,
+        h: HELP_BOARD_H,
+        x: 16,
+        y: 37
+      },
       lines: [
-        { text: '目标：把地雷全部标出来，别踩到雷。', x: 16, y: 44, size: 12, align: 'left' },
-        { text: '左键翻开格子；右键插旗，再右键变问号。', x: 16, y: 66, size: 12, align: 'left' },
-        { text: '数字表示周围 8 格里的雷数。', x: 16, y: 88, size: 12, align: 'left' },
-        { text: '数字够了就双击它（和弦），其余邻格会自动翻开。', x: 16, y: 110, size: 12, align: 'left' },
-        { text: '开局第一下保证不是雷，周围也会空出一片。', x: 16, y: 132, size: 12, align: 'left' },
-        { text: '双指可以缩放棋盘，单指拖动可以平移。', x: 16, y: 154, size: 12, align: 'left' }
+        { text: '目标：把地雷全部标出来，别踩到雷。', x: 288, y: 67, size: 12, align: 'left' },
+        { text: '左键翻开格子；右键插旗，再右键变问号。', x: 288, y: 89, size: 12, align: 'left' },
+        { text: '数字表示周围 8 格里的雷数。', x: 288, y: 111, size: 12, align: 'left' },
+        { text: '数字够了就双击它（和弦），其余邻格会自动翻开。', x: 288, y: 133, size: 12, align: 'left' },
+        { text: '开局第一下保证不是雷，周围也会空出一片。', x: 288, y: 155, size: 12, align: 'left' },
+        { text: '双指可以缩放棋盘，单指拖动可以平移。', x: 288, y: 177, size: 12, align: 'left' }
       ],
       buttons: [
-        { id: 'close', label: '确定', x: 110, y: 170, w: 100, h: 25 }
+        { id: 'close', label: '确定', x: 242, y: 241, w: 100, h: 25 }
       ]
     };
   }
@@ -408,6 +445,24 @@ export class WinDialogPainter {
     ctx.fillRect(cx - 1 * sVp, cy, 1 * sVp, ch);
     ctx.fillRect(cx + cw, cy, 1 * sVp, ch);
     ctx.fillRect(cx - 1 * sVp, cy + ch, cw + 2 * sVp, 1 * sVp);
+
+    // 可选整图（帮助窗口里的原版插图 helpBoard.png）
+    //
+    // 像素级的三个要点：
+    // 1) 放大倍数取**整数**（floor 对话框缩放倍数），这样每个源像素正好占
+    //    整数个设备像素，配合最近邻（imageSmoothingEnabled=false）边缘不发虚；
+    // 2) 目标左上角先**取整到设备像素**，否则图像落在半个像素上会发虚；
+    // 3) 源矩形用 vp（API 18+ PixelMap 裁剪矩形默认单位是 vp），
+    //    且**不乘 SPRITE_SCALE** —— helpBoard.png 是 1:1 的图，×2 会裁到图外。
+    if (spec.image !== undefined) {
+      const pic: DlgImage = spec.image;
+      const pxScale: number = sVp / sDev;               // vp / 设备像素
+      const k: number = Math.max(1, Math.floor(sDev)); // 每个源像素占 k 个设备像素
+      const devX: number = Math.round((oxVp + pic.x * sVp) / pxScale);
+      const devY: number = Math.round((oyVp + pic.y * sVp) / pxScale);
+      SpriteAtlas.drawWhole(ctx, SpriteAtlas.helpBoardSheet, pic.w, pic.h,
+        devX, devY, k, pxScale);
+    }
 
     // 标题栏底部分隔线（loss.jpg y=29，整行通宽）
     ctx.fillStyle = classic ? C_C_TITLE_SEP : C_TITLE_SEP;

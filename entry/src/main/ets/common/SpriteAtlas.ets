@@ -25,6 +25,17 @@ export class SpriteAtlas {
   /** Frame.png：棋盘区底板（九宫格，1 倍）。实测这张图上下颠倒、角落还藏着状态条素材，
    *  九宫格不能直接用，本项目不加载它 */
   frameSheet: image.PixelMap | null = null;
+  /** helpBoard.png：原版帮助窗口插图（256x192，**1 倍**，不是 2 倍图） */
+  helpBoard: image.PixelMap | null = null;
+
+  /**
+   * 已加载的 helpBoard 图（**静态**）。
+   *
+   * 为什么要静态：帮助对话框在 WinDialog.ets 里画这张图，而画对话框的是
+   * GameController（那边正在改，不便动），所以用静态字段把 PixelMap 递过去。
+   * 全局只有一份图集，静态不会有多份。
+   */
+  static helpBoardSheet: image.PixelMap | null = null;
 
   /** 是否已经加载过（页面重建时不必重复读资源） */
   loaded: boolean = false;
@@ -44,9 +55,12 @@ export class SpriteAtlas {
     this.boardSheet = await SpriteAtlas.loadPixelMap(ctx, 'blueSheet.png');
     this.gameSheet = await SpriteAtlas.loadPixelMap(ctx, 'minesweeperSheet.png');
     this.otherSheet = await SpriteAtlas.loadPixelMap(ctx, 'otherSheet.png');
+    this.helpBoard = await SpriteAtlas.loadPixelMap(ctx, 'helpBoard.png');
+    SpriteAtlas.helpBoardSheet = this.helpBoard;
     this.loaded = true;
     console.info('[SpriteAtlas] 图集加载完成 board=' + (this.boardSheet !== null) +
-      ' game=' + (this.gameSheet !== null) + ' other=' + (this.otherSheet !== null));
+      ' game=' + (this.gameSheet !== null) + ' other=' + (this.otherSheet !== null) +
+      ' help=' + (this.helpBoard !== null));
   }
 
   private static async loadPixelMap(ctx: common.UIAbilityContext, name: string): Promise<image.PixelMap | null> {
@@ -97,5 +111,38 @@ export class SpriteAtlas {
   drawLogical(ctx: CanvasRenderingContext2D, sheet: image.PixelMap | null,
     srcRect: number[], dx: number, dy: number, unit: number): void {
     this.draw(ctx, sheet, srcRect, dx, dy, srcRect[2] * unit, srcRect[3] * unit);
+  }
+
+  /**
+   * 把一整张 **1:1 的图**画到画布上（源坐标**不乘 SPRITE_SCALE**）。
+   *
+   * 给 helpBoard.png（256x192 原图）用。上面那个 draw() 会把源矩形乘 SPRITE_SCALE(=2)，
+   * 用在 1:1 图上会从图里裁到错的地方（×2 直接裁到图外 → 画出一片空白）。
+   *
+   * 放大倍数必须是**整数**：这样每个源像素正好占 scale 个设备像素，
+   * 配合 imageSmoothingEnabled=false 就是最近邻放大，边缘不会糊。
+   *
+   * @param sheet  源图（null 时什么都不画）
+   * @param srcW   源图宽（**源像素**）
+   * @param srcH   源图高（**源像素**）
+   * @param devX   目标左上角（**设备像素**）
+   * @param devY   同上
+   * @param scale  放大倍数（整数）
+   * @param pxScale vp / 设备像素（Canvas 与 PixelMap 裁剪矩形都用它换算）
+   */
+  static drawWhole(ctx: CanvasRenderingContext2D, sheet: image.PixelMap | null,
+    srcW: number, srcH: number, devX: number, devY: number, scale: number, pxScale: number): void {
+    if (sheet === null) {
+      return;
+    }
+    // 最近邻：放大后每个源像素都是硬边，不发虚
+    const smooth: boolean = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false;
+    // 源矩形用 vp（API 18+ PixelMap 裁剪矩形默认单位是 vp）
+    ctx.drawImage(sheet,
+      0, 0, srcW * pxScale, srcH * pxScale,
+      devX / pxScale, devY / pxScale,
+      srcW * scale / pxScale, srcH * scale / pxScale);
+    ctx.imageSmoothingEnabled = smooth;
   }
 }
