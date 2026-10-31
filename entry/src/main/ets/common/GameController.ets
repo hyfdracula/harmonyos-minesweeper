@@ -19,6 +19,7 @@ import { SoundPlayer, Sound } from './SoundPlayer';
 import { WinMenuPainter, MenuSpec, MENU_BAR_H } from './WinMenu';
 import { CustomField, CustomSpec, DLG_W, DLG_H } from './CustomField';
 import { NumKeypad } from './NumKeypad';
+import { Anim } from './Anim';
 import {
   TILE, MAX_SCALE_INDEX, FRAME_GAP_L, FRAME_GAP_T, FRAME_GAP_R, FRAME_GAP_B,
   gradientFrame, normalTileRect, pressedTileRect, RECT_FLAG, RECT_QUESTION, RECT_HILITE, RECT_MISFLAG,
@@ -145,6 +146,8 @@ export class GameController {
     this.engine.reset(rows, cols, mines);
     this.seconds = 0;
     this.stopTimer();
+    this.stopAnimTimer();
+    Anim.stopTrip();
     this.gameOverNotified = false;
     this.dialog = null;
     this.menuOpenId = '';
@@ -395,6 +398,17 @@ export class GameController {
           if (cell.exploded) {
             // 踩中的那颗雷
             this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_MINE, x, y, u);
+            // 爆炸动画（只在踩中的那一格上播）
+            if (Anim.tripActive && idx === Anim.tripCell) {
+              const rect = Anim.currentRect();
+              if (rect !== null) {
+                // 每帧大小不同，按格子中心对齐
+                const fw = rect[2] * u;
+                const fh = rect[3] * u;
+                this.atlas.draw(ctx, this.atlas.otherSheet, rect,
+                  x + (this.tile - fw) / 2, y + (this.tile - fh) / 2, fw, fh);
+              }
+            }
           } else if (cell.mine) {
             // 判负时引擎把未插旗的雷全部翻开，这里补上雷
             this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_MINE, x, y, u);
@@ -569,11 +583,63 @@ export class GameController {
       return;
     }
     this.gameOverNotified = true;
-    this.buildDialog(s === GameState.Won);
-    SoundPlayer.play(s === GameState.Won ? Sound.GAME_WIN : Sound.GAME_LOSE);
+    const won = s === GameState.Won;
+    SoundPlayer.play(won ? Sound.GAME_WIN : Sound.GAME_LOSE);
+    if (!won) {
+      // 判负：先播完爆炸动画，再弹对话框（原版就是先炸后弹）
+      const cell = this.explodedCellIndex();
+      if (cell >= 0) {
+        Anim.startTrip(cell);
+        this.startAnimTimer();
+        return;
+      }
+    }
+    this.buildDialog(won);
     const cb = this.onGameOver;
     if (cb !== null) {
-      cb(s === GameState.Won);
+      cb(won);
+    }
+  }
+
+  /** 找出踩中的那颗雷的格索引（没有就 -1） */
+  private explodedCellIndex(): number {
+    const e = this.engine;
+    for (let r = 0; r < e.rowCount; r++) {
+      for (let c = 0; c < e.colCount; c++) {
+        if (e.cellAt(r, c).exploded) {
+          return r * e.colCount + c;
+        }
+      }
+    }
+    return -1;
+  }
+
+  /** 动画定时器（爆炸动画用，比计时器快得多） */
+  private animHandle: number = -1;
+
+  private startAnimTimer(): void {
+    if (this.animHandle !== -1) {
+      return;
+    }
+    this.animHandle = setInterval(() => {
+      const more = Anim.tick();
+      this.draw();
+      if (!more) {
+        this.stopAnimTimer();
+        // 动画放完，弹结束对话框
+        this.buildDialog(false);
+        const cb = this.onGameOver;
+        if (cb !== null) {
+          cb(false);
+        }
+      }
+    }, Anim.FRAME_MS);
+  }
+
+  private stopAnimTimer(): void {
+    if (this.animHandle !== -1) {
+      clearInterval(this.animHandle);
+      this.animHandle = -1;
     }
   }
 
@@ -891,6 +957,7 @@ export class GameController {
   /** 组件销毁时调用：停掉计时器，别让它继续往已销毁的画布上画 */
   dispose(): void {
     this.stopTimer();
+    this.stopAnimTimer();
     this.context = null;
   }
 
@@ -899,6 +966,10 @@ export class GameController {
     if (this.timerHandle !== -1) {
       clearInterval(this.timerHandle);
       this.timerHandle = -1;
+    }
+    if (this.animHandle !== -1) {
+      clearInterval(this.animHandle);
+      this.animHandle = -1;
     }
   }
 
