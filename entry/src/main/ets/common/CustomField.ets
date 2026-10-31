@@ -214,8 +214,9 @@ export class CustomField {
    *   - 焦点刚切换（或调用过 focusField）时，这一位数字**替换**框里的旧值；
    *     否则追加到旧值后面
    *   - 追加后超过该框上限则**拒绝这次输入**（值保持不变，返回 false）
-   *     高度上限 24、宽度上限 30、雷数上限 maxMines(高度, 宽度)
-   *   - 改了高度或宽度后，雷数若已超过新的上限会被立刻收回到上限
+   *     高度上限 24、宽度上限 30、雷数上限 **668**（全局，见 maxOfField）
+   *   - 改了高度或宽度后，雷数若已超过**本盘面**的上限会被立刻收回到该上限
+   *     （本盘面上限 = maxMines(高度, 宽度)，是**确定时**真正生效的值）
    *
    * 不做「下限」夹取：正在输入的中间值（比如高度先输了个 1）要保留，
    * 下限统一由 clampSpec 在「确定」时处理。
@@ -388,11 +389,20 @@ export class CustomField {
     ctx.textBaseline = 'top';
     // 提示行：输入范围照抄原版（10-668），但把**本盘面的实际上限**也说清楚——
     // 确定时按盘面夹取（见 clampSpec），不说清楚用户会以为填 668 就有 668 颗雷。
-    ctx.fillText('高度 ' + MIN_ROWS.toString() + '-' + MAX_ROWS.toString() +
+    //
+    // 坑（2026-10-31，custom-agent 裁决）：夹取原来是**静默**的——9×9 填 500，
+    // 点确定后悄悄变成 65，用户毫无察觉。原版两处参考实现都会把生效值写回
+    // （Lmy `Minesweeper.cpp:234/240/246` 用 SetDlgItemInt；原版 XP 也在对话框里夹）。
+    // 我们不写回输入框（框马上就关了，写回也看不见），改成**当场把生效值说清楚**。
+    const maxM: number = CustomField.maxMines(s.height, s.width);
+    let hint: string = '高度 ' + MIN_ROWS.toString() + '-' + MAX_ROWS.toString() +
       '，宽度 ' + MIN_COLS.toString() + '-' + MAX_COLS.toString() +
       '，雷数 ' + MIN_MINES.toString() + '-' + MAX_MINES.toString() +
-      '（本盘面最多 ' + CustomField.maxMines(s.height, s.width).toString() + '）',
-      oxVp + HINT_X * sVp, oyVp + HINT_Y * sVp);
+      '（本盘面最多 ' + maxM.toString() + '）';
+    if (s.mines > maxM) {
+      hint += '，当前 ' + s.mines.toString() + ' 将按 ' + maxM.toString() + ' 布雷';
+    }
+    ctx.fillText(hint, oxVp + HINT_X * sVp, oyVp + HINT_Y * sVp);
 
     // 底部两个按钮
     CustomField.drawButton(ctx, '确定(O)', oxVp + BTN_OK_X * sVp, oyVp + BTN_Y * sVp,

@@ -1083,12 +1083,17 @@ export class GameController {
         // 存档失败不影响对局
       });
     }
-    const bestText = GameStats.bestTextOf(cfg.name);
+    // 自定义局的「最快时间 / 日期」两行**不显示**。
+    // 坑（2026-10-31，custom-agent 裁决 P6）：自定义局不进统计，所以它没有纪录；
+    // 原来这里照抄了**预设难度**（初级/中级/高级）的纪录，等于给自定义局报了个
+    // 毫不相干的成绩。空字符串会让 winSpec 跳过这两行（见 WinDialog.winSpec）。
+    const bestText: string = this.customGame ? '' : GameStats.bestTextOf(cfg.name);
     const bestSec = GameStats.bestSecondsOf(cfg.name);
     const isNewBest = !this.customGame && won && (bestSec < 0 || this.seconds <= bestSec);
     if (won) {
       this.dialog = WinDialogPainter.winSpec(this.seconds, GameStats.played, GameStats.won,
-        GameStats.percent, bestText, GameStats.bestDateOf(cfg.name), isNewBest);
+        GameStats.percent, bestText, this.customGame ? '' : GameStats.bestDateOf(cfg.name),
+        isNewBest);
     } else {
       this.dialog = WinDialogPainter.loseSpec(this.seconds, GameStats.played, GameStats.won, GameStats.percent);
     }
@@ -1119,9 +1124,12 @@ export class GameController {
    */
   private computeDialogScale(refWidth: number, refHeight: number): number {
     const density = 1 / this.pxScale;
-    const maxByWidth = Math.max(1, (this.canvasW - 32) / refWidth);
-    const maxByHeight = Math.max(1, (this.canvasH - 32) / refHeight);
-    return Math.max(1, Math.min(2, density, maxByWidth, maxByHeight));
+    const maxByWidth = (this.canvasW - 32) / refWidth;
+    const maxByHeight = (this.canvasH - 32) / refHeight;
+    // 下限 **0.5** 而不是 1（custom-agent 裁决）：画布窄到放不下时，
+    // 宁可整体缩小也要**完整可见** —— 被截断的按钮是点不到的。
+    // 真机（含分屏窄条 540px）都到不了这个尺寸，但这是从根上消除裁切的办法。
+    return Math.max(0.5, Math.min(2, density, maxByWidth, maxByHeight));
   }
 
   private dialogLayout(): void {
@@ -1291,10 +1299,18 @@ export class GameController {
 
   // ------------------------------------------------------------ 自定义难度
 
-  /** 打开「自定义」对话框（按当前难度的行列数预填） */
+  /**
+   * 打开「自定义」对话框。
+   *
+   * 预填**当前盘面**的参数，不是当前难度的预设值。
+   * 坑（2026-10-31，custom-agent 裁决 P4）：原来用 `configOf(this.difficulty)`，
+   * 于是「高级局 → 自定义」预填的是 30×16 而不是当前正在玩的那一局。
+   * 原版是拿当前盘面预填的（用户多半是微调当前局）。
+   * 依据：docs\CUSTOM-DIALOG-VERDICT.md
+   */
   openCustomDialog(): void {
-    const cfg = GameController.configOf(this.difficulty);
-    this.customSpec = CustomField.specOf(cfg.rows, cfg.cols, cfg.mines);
+    this.customSpec = CustomField.specOf(this.engine.rowCount, this.engine.colCount,
+      this.engine.mineCount);
     this.dialog = null;
     this.menuOpenId = '';
     this.draw();
