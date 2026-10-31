@@ -836,17 +836,18 @@ export class GameController {
     const e = this.engine;
     const cells: number[] = [];
     const times: number[] = [];
-    const barH = 62; // 扫描条高度（逻辑单位）
+    const barH = Anim.SCAN_BAR[3] * this.unit;
+    const boardBottom = this.boardY + e.rowCount * this.tile;
+    const boardH = Math.max(1, e.rowCount * this.tile);
     for (let r = 0; r < e.rowCount; r++) {
       for (let c = 0; c < e.colCount; c++) {
         if (!e.cellAt(r, c).mine) {
           continue;
         }
-        const mineY = this.boardY + r * this.tile; // 设备像素
-        const boardBottom = this.boardY + e.rowCount * this.tile;
-        const boardH = e.rowCount * this.tile;
-        // 扫描条的下沿自 boardBottom 往上走，扫到这一行时进度是多少
-        const crossed = (boardBottom - mineY) / Math.max(1, boardH);
+        // 扫描条的上沿从 boardBottom - barH 起步往上走，
+        // 扫到这一行（行顶 y = boardY + r*tile）时已走过的比例。
+        const mineY = this.boardY + r * this.tile;
+        const crossed = (boardBottom - barH - mineY) / boardH;
         cells.push(r * e.colCount + c);
         times.push(Math.max(0, Math.min(1, crossed)) * Anim.SWEEP_MS);
       }
@@ -856,7 +857,12 @@ export class GameController {
     this.startAnimTimer();
   }
 
-  /** 扫描条当前的位置（设备像素）；不在扫就返回 -1 */
+  /**
+   * 扫描条当前的位置（设备像素，返回条的上沿）；不在扫就返回 -1。
+   *
+   * 行程：p=0 时条的**下沿**贴棋盘下沿，p=1 时条的**下沿**离开棋盘上沿
+   *  —— 即条的上沿从 boardBottom - barH 走到 boardTop - barH，正好扫完全盘。
+   */
   private scanBarY(): number {
     if (!Anim.winActive) {
       return -1;
@@ -864,9 +870,9 @@ export class GameController {
     const e = this.engine;
     const boardBottom = this.boardY + e.rowCount * this.tile;
     const boardH = e.rowCount * this.tile;
+    const barH = Anim.SCAN_BAR[3] * this.unit;
     const p = Math.min(1, Anim.winElapsed / Anim.SWEEP_MS);
-    const barH = 62 * (this.tile / 18); // 扫描条按格子比例缩放
-    return boardBottom - p * (boardH + barH) - barH;
+    return boardBottom - barH - p * boardH;
   }
 
   /** 找出踩中的那颗雷的格索引（没有就 -1） */
