@@ -538,32 +538,37 @@ export class GameController {
    */
   private dealFlags: boolean[] = [];
   private dealStart: number = 0;
-  private dealTimer: number = -1;
+  private dealActive: boolean = false;
 
   private startDealIn(): void {
-    this.stopDealIn();
     const e = this.engine;
     if (e.rowCount <= 0 || e.colCount <= 0) {
       return;
     }
     this.dealFlags = DealIn.frameAt(0, e.rowCount, e.colCount);
     this.dealStart = Date.now();
-    this.dealTimer = setInterval(() => {
-      const elapsed = Date.now() - this.dealStart;
-      this.dealFlags = DealIn.frameAt(elapsed, e.rowCount, e.colCount);
-      if (elapsed >= DealIn.TOTAL_MS) {
-        this.stopDealIn();
-      }
-      this.draw();
-    }, 30);
+    this.dealActive = true;
+    this.ensureFrameTimer();
   }
 
   private stopDealIn(): void {
-    if (this.dealTimer !== -1) {
-      clearInterval(this.dealTimer);
-      this.dealTimer = -1;
-    }
+    this.dealActive = false;
     this.dealFlags = [];
+  }
+
+  /** 推进发牌动画，返回 true 表示还在进行 */
+  private tickDealIn(): boolean {
+    if (!this.dealActive) {
+      return false;
+    }
+    const e = this.engine;
+    const elapsed = Date.now() - this.dealStart;
+    if (elapsed >= DealIn.TOTAL_MS) {
+      this.stopDealIn();
+      return false;
+    }
+    this.dealFlags = DealIn.frameAt(elapsed, e.rowCount, e.colCount);
+    return true;
   }
 
   /** 该格是否已经弹起（发牌动画中） */
@@ -584,7 +589,7 @@ export class GameController {
    */
   private rippleSteps: RippleStep[] = [];
   private rippleStart: number = 0;
-  private rippleTimer: number = -1;
+  private rippleActive: boolean = false;
 
   /** 开始一次涟漪（展开格数不足时自动跳过） */
   private startRipple(startCell: number, opened: number[]): void {
@@ -595,22 +600,25 @@ export class GameController {
     }
     this.rippleSteps = steps;
     this.rippleStart = Date.now();
-    this.rippleTimer = setInterval(() => {
-      if (Date.now() - this.rippleStart >= Ripple.totalMsOf(steps)) {
-        this.stopRipple();
-        this.draw();
-        return;
-      }
-      this.draw();
-    }, 30);
+    this.rippleActive = true;
+    this.ensureFrameTimer();
   }
 
   private stopRipple(): void {
-    if (this.rippleTimer !== -1) {
-      clearInterval(this.rippleTimer);
-      this.rippleTimer = -1;
-    }
+    this.rippleActive = false;
     this.rippleSteps = [];
+  }
+
+  /** 推进涟漪，返回 true 表示还在进行 */
+  private tickRipple(): boolean {
+    if (!this.rippleActive) {
+      return false;
+    }
+    if (Date.now() - this.rippleStart >= Ripple.totalMsOf(this.rippleSteps)) {
+      this.stopRipple();
+      return false;
+    }
+    return true;
   }
 
   /** 某格当前的淡入不透明度（1 = 完全显示） */
@@ -800,6 +808,7 @@ export class GameController {
       const cell = this.explodedCellIndex();
       if (cell >= 0) {
         Anim.startTrip(cell);
+        this.pendingGameOver = true;
         this.startAnimTimer();
         return;
       }
@@ -843,6 +852,7 @@ export class GameController {
       }
     }
     Anim.startWin(cells, times);
+    this.pendingGameOver = true;
     this.startAnimTimer();
   }
 
@@ -909,24 +919,62 @@ export class GameController {
     }
   }
 
-  /** 动画定时器（爆炸/胜利动画用，比计时器快得多） */
-  private animHandle: number = -1;
-  /** 动画上一帧的时刻（ms） */
-  private animLast: number = 0;
-
   private startAnimTimer(): void {
-    if (this.animHandle !== -1) {
+    this.ensureFrameTimer();
+  }
+
+  private stopAnimTimer(): void {
+    // 动画状态本身由 Anim 管，这里只把「等它放完再弹框」的标记清掉，
+    // 时钟由统一帧定时器自己判断还要不要继续跑。
+    this.pendingGameOver = false;
+  }
+
+  // -------------------------------------------------- 统一帧定时器（30ms）
+
+  /**
+   * 画布上所有逐帧动画（发牌 / 涟漪 / 爆炸 / 胜利扫描条）共用一个定时器。
+   *
+   * 早先用三个独立 setInterval 各画一次，重叠时同一帧会把整块画布画三遍，
+   * 折叠屏上会掉帧。现在统一成：有动画才开，没动画就关，每帧只画一次。
+   */
+  private frameHandle: number = -1;
+  /** 上一帧时刻，给 Anim.tick 算 dt */
+  private frameLast: number = 0;
+  /** 动画放完后要不要弹结束对话框 */
+  private pendingGameOver: boolean = false;
+
+  private ensureFrameTimer(): void {
+    if (this.frameHandle !== -1) {
       return;
     }
-    this.animLast = Date.now();
-    this.animHandle = setInterval(() => {
-      const now = Date.now();
-      const dt = now - this.animLast;
-      this.animLast = now;
-      const more = Anim.tick(dt);
-      if (!more) {
-        this.stopAnimTimer();
-        // 动画放完，弹结束对话框。
+    this.frameLast = Date.now();
+    this.frameHandle = setInterval(() => {
+      this.tickFrames();
+    }, 30);
+  }
+
+  private stopFrameTimer(): void {
+    if (this.frameHandle !== -1) {
+      clearInterval(this.frameHandle);
+      this.frameHandle = -1;
+    }
+  }
+
+  /** 一帧：推进所有动画，最后只重画一次 */
+  private tickFrames(): void {
+    const now = Date.now();
+    const dt = now - this.frameLast;
+    this.frameLast = now;
+
+    const dealMore = this.tickDealIn();
+    const rippleMore = this.tickRipple();
+    const animMore = Anim.tick(dt);
+    const anyMore = dealMore || rippleMore || animMore;
+
+    if (!anyMore) {
+      this.stopFrameTimer();
+      if (this.pendingGameOver) {
+        this.pendingGameOver = false;
         // 顺序很重要：**先建对话框再重画**，否则对话框建好了却没画出来
         // （Codex 复审 P1：胜利扫描条结束后对话框一直不出现）。
         const won = this.engine.gameState === GameState.Won;
@@ -936,17 +984,10 @@ export class GameController {
         if (cb !== null) {
           cb(won);
         }
-      } else {
-        this.draw();
+        return;
       }
-    }, 30);
-  }
-
-  private stopAnimTimer(): void {
-    if (this.animHandle !== -1) {
-      clearInterval(this.animHandle);
-      this.animHandle = -1;
     }
+    this.draw();
   }
 
   // ------------------------------------------------------------------ 结束对话框
@@ -1374,10 +1415,24 @@ export class GameController {
     }
   }
 
+  /**
+   * 还有没有动画要跑。
+   *
+   * 发牌/涟漪/爆炸/胜利扫描条都算——漏掉任何一个，
+   * 切后台或换屏重建后就可能停在那儿不动（Codex 复审 P1）。
+   */
+  private hasActiveFrameWork(): boolean {
+    return Anim.winActive || Anim.tripActive || this.dealActive || this.rippleActive;
+  }
+
   /** 组件销毁时调用：停掉计时器，别让它继续往已销毁的画布上画 */
   dispose(): void {
     this.stopTimer();
-    this.stopAnimTimer();
+    this.stopFrameTimer();
+    // 注意：**不要**清 pendingGameOver。
+    // 折叠/旋转会重建画布（dispose → attach → resume），若这时正在放爆炸或
+    // 胜利扫描条，清掉标记会导致动画放完后既不弹结束框、也不记成绩
+    // （Codex 复审 P1）。
     this.context = null;
   }
 
@@ -1387,10 +1442,8 @@ export class GameController {
       clearInterval(this.timerHandle);
       this.timerHandle = -1;
     }
-    if (this.animHandle !== -1) {
-      clearInterval(this.animHandle);
-      this.animHandle = -1;
-    }
+    // 逐帧动画也停（手机上放口袋不该继续耗电），回前台会接着放
+    this.stopFrameTimer();
   }
 
   /** 应用回到前台：若正在游戏中则恢复计时 */
@@ -1398,8 +1451,8 @@ export class GameController {
     if (this.engine.gameState === GameState.Playing) {
       this.startTimer();
     }
-    // 胜利扫描条被切后台打断时，要接着放完，否则胜利对话框永远不弹
-    if (Anim.winActive || Anim.tripActive) {
+    // 任何动画被打断都要接着跑（发牌、涟漪、爆炸、胜利扫描条）
+    if (this.hasActiveFrameWork()) {
       this.startAnimTimer();
     }
   }
@@ -1409,7 +1462,7 @@ export class GameController {
     if (this.engine.gameState === GameState.Playing) {
       this.startTimer();
     }
-    if (Anim.winActive || Anim.tripActive) {
+    if (this.hasActiveFrameWork()) {
       this.startAnimTimer();
     }
     if (this.context !== null) {
