@@ -60,6 +60,8 @@ struct Index {
       } else if (action === 'sound') {
         SoundPlayer.setEnabled(!SoundPlayer.isEnabled);
         this.controller.refreshMenu();
+      } else if (action === 'marks') {
+        this.controller.toggleQuestionMarks();
       } else if (action === 'best' || action === 'about') {
         this.controller.openInfoDialog(action);
       } else if (action === 'custom') {

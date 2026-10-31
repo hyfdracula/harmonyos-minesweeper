@@ -23,9 +23,9 @@ import { Anim } from './Anim';
 import {
   TILE, MAX_SCALE_INDEX, FRAME_GAP_L, FRAME_GAP_T, FRAME_GAP_R, FRAME_GAP_B,
   gradientFrame, normalTileRect, pressedTileRect, RECT_FLAG, RECT_QUESTION, RECT_HILITE, RECT_MISFLAG,
-  RECT_SHADOW_U, RECT_SHADOW_L, RECT_COUNTER, digitRect, RECT_MINE, RECT_PANEL_MINE, RECT_CLOCK,
+  RECT_SHADOW_U, RECT_SHADOW_L, RECT_COUNTER, digitRect, RECT_MINE, RECT_PANEL_MINE, RECT_CLOCK, RECT_FACE,
   COLOR_OUTSIDE, COLOR_FLOOR, COLOR_SUNKEN,
-  STRIP_BAND, STRIP_CLOCK_SIZE, STRIP_PANEL_W, STRIP_PANEL_H, STRIP_GAP, stripMargin
+  STRIP_BAND, STRIP_FACE_SIZE, STRIP_CLOCK_SIZE, STRIP_PANEL_W, STRIP_PANEL_H, STRIP_GAP, stripMargin
 } from './Theme';
 
 /** 难度档位（与原版一致） */
@@ -112,6 +112,8 @@ export class GameController {
   customSpec: CustomSpec | null = null;
   private customOx: number = 0;
   private customOy: number = 0;
+  /** 是否允许插问号（原版「游戏 → 标记(?)」开关） */
+  questionMarks: boolean = true;
   /** 终局回调（页面用它弹结果面板） */
   onGameOver: ((won: boolean) => void) | null = null;
   /** 结束对话框按钮被点：'again' | 'menu' | 'exit' */
@@ -444,6 +446,13 @@ export class GameController {
    * 底部状态条：时钟+计时在左，雷数+雷图标在右，中间大片留空。
    * 位置按原版反推：两组分别贴着棋盘的左右沿，留白随棋盘宽度缩放。
    */
+  /**
+   * 状态条（真 Win7 顺序，依据微软自己的 helpBoard.png）：
+   *
+   *     [笑脸][雷数面板] ················· [计时面板][雷图标]
+   *
+   * 之前按某个复刻画成了 [时钟][计时面板]…[雷数面板][雷图标]，左右是反的。
+   */
   private drawStatusStrip(ctx: CanvasRenderingContext2D): void {
     const u = this.unit;
     const e = this.engine;
@@ -451,19 +460,22 @@ export class GameController {
     const boardRight = this.boardX + e.colCount * this.tile;
     const margin = stripMargin(e.colCount) * u;
 
-    const clockX = this.boardX + margin;
-    const clockY = boardBottom + Math.round((STRIP_BAND - STRIP_CLOCK_SIZE) / 2) * u;
-    const timeX = clockX + (STRIP_CLOCK_SIZE + STRIP_GAP) * u;
+    // 左端：笑脸 + 雷数面板
+    const faceX = this.boardX + margin;
+    const faceY = boardBottom + Math.round((STRIP_BAND - STRIP_FACE_SIZE) / 2) * u;
+    const mineX = faceX + (STRIP_FACE_SIZE + STRIP_GAP) * u;
+    const mineY = boardBottom + Math.round((STRIP_BAND - STRIP_PANEL_H) / 2) * u;
+
+    // 右端：计时面板 + 雷图标
+    const iconX = boardRight - margin - STRIP_CLOCK_SIZE * u;
+    const iconY = boardBottom + Math.round((STRIP_BAND - STRIP_CLOCK_SIZE) / 2) * u;
+    const timeX = iconX - (STRIP_GAP + STRIP_PANEL_W) * u;
     const timeY = boardBottom + Math.round((STRIP_BAND - STRIP_PANEL_H) / 2) * u;
 
-    const iconX = boardRight - margin - STRIP_CLOCK_SIZE * u;
-    const iconY = clockY;
-    const mineX = iconX - (STRIP_GAP + STRIP_PANEL_W) * u;
-    const mineY = timeY;
-
-    this.atlas.drawLogical(ctx, this.atlas.otherSheet, RECT_CLOCK, clockX, clockY, u);
-    this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, timeX, timeY, u);
+    this.atlas.drawRaw(ctx, this.atlas.faceSheet, RECT_FACE,
+      faceX, faceY, STRIP_FACE_SIZE * u, STRIP_FACE_SIZE * u);
     this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, mineX, mineY, u);
+    this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, timeX, timeY, u);
     this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_PANEL_MINE, iconX, iconY, u);
 
     // 字号单位：Canvas 的 font 里 "px" 是**设备像素**（与画布坐标的 vp 不是一回事，
@@ -472,8 +484,8 @@ export class GameController {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#ffffff';
-    ctx.fillText(`${this.seconds}`, this.v(timeX + STRIP_PANEL_W * u / 2), this.v(timeY + STRIP_PANEL_H * u / 2));
     ctx.fillText(`${e.minesRemaining()}`, this.v(mineX + STRIP_PANEL_W * u / 2), this.v(mineY + STRIP_PANEL_H * u / 2));
+    ctx.fillText(`${this.seconds}`, this.v(timeX + STRIP_PANEL_W * u / 2), this.v(timeY + STRIP_PANEL_H * u / 2));
   }
 
   // ------------------------------------------------------------------ 交互
@@ -686,14 +698,27 @@ export class GameController {
     // 几何用 vp，字号用设备像素：两者差一个密度（见 SPEC §5.7）
     WinDialogPainter.draw(ctx, d, this.dialogScale, this.dialogScale * this.pxScale,
       this.v(this.dialogOx), this.v(this.dialogOy));
+    // 可选图标（例如「关于」框里的雷）
+    if (d.icon !== undefined && d.iconPos !== undefined) {
+      const sVp = this.dialogScale * this.pxScale;
+      this.atlas.drawLogical(ctx, this.atlas.gameSheet, d.icon,
+        this.v(this.dialogOx) + d.iconPos[0] * sVp,
+        this.v(this.dialogOy) + d.iconPos[1] * sVp, sVp);
+    }
   }
 
   /** 打开一个「菜单触发的」对话框（最佳成绩 / 关于） */
   openInfoDialog(kind: string): void {
-    const cfg = GameController.configOf(this.difficulty);
     if (kind === 'best') {
+      const rows: string[] = [];
+      for (const level of ['初级', '中级', '高级']) {
+        const t = GameStats.bestTextOf(level);
+        const d = GameStats.bestDateOf(level);
+        rows.push(level + '    ' + (t.length > 0 ? t : '暂无纪录') +
+          (d.length > 0 ? '    ' + d : ''));
+      }
       this.dialog = WinDialogPainter.bestSpec(this.seconds, GameStats.played, GameStats.won,
-        GameStats.percent, GameStats.bestTextOf(cfg.name));
+        GameStats.percent, rows);
     } else {
       this.dialog = WinDialogPainter.aboutSpec();
     }
@@ -830,6 +855,7 @@ export class GameController {
             { id: 'intermediate', label: '中级', checked: this.difficulty === Difficulty.Intermediate },
             { id: 'expert', label: '高级', checked: this.difficulty === Difficulty.Expert },
             { id: 'custom', label: '自定义' },
+            { id: 'marks', label: '标记(?)', checked: this.questionMarks },
             { id: 'sep2', label: '', separator: true },
             { id: 'sound', label: '声音', checked: SoundPlayer.isEnabled },
             { id: 'sep3', label: '', separator: true },
@@ -897,6 +923,13 @@ export class GameController {
   refreshMenu(): void {
     this.buildMenu();
     this.draw();
+  }
+
+  /** 切换「标记(?)」：关掉问号后，长按只有 旗 → 无 两种状态 */
+  toggleQuestionMarks(): void {
+    this.questionMarks = !this.questionMarks;
+    this.engine.questionMarksAllowed = this.questionMarks;
+    this.refreshMenu();
   }
 
   /**

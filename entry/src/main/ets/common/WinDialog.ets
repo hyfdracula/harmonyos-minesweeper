@@ -46,6 +46,10 @@ export interface DlgSpec {
   height: number;
   lines: DlgLine[];
   buttons: DlgButton[];
+  /** 可选：左侧图标（源矩形，画在 gameSheet 上） */
+  icon?: number[];
+  /** 图标位置与尺寸（参考像素） */
+  iconPos?: number[];
 }
 
 /** 颜色（实测自 loss.jpg） */
@@ -117,43 +121,55 @@ export class WinDialogPainter {
 
   /**
    * 「最佳成绩」对话框（菜单 游戏 → 最佳成绩）
+   *
+   * 原版 Win7 的这个框叫 Winners，列出**每个难度各自的最快时间与日期**，
+   * 所以这里三行（初级/中级/高级）各一档。
+   *
+   * @param rows 每行文字，形如 '初级    12秒    2026-10-31 10:20'
    */
   static bestSpec(seconds: number, played: number, won: number, percent: number,
-    bestText: string): DlgSpec {
+    rows: string[]): DlgSpec {
     const lines: DlgLine[] = [];
     lines.push({ text: '最佳成绩', x: 190, y: 44, size: 14, align: 'center' });
-    lines.push({ text: '最快时间: ' + (bestText.length > 0 ? bestText : '暂无纪录'), x: 30, y: 92, size: 12, align: 'left' });
-    lines.push({ text: '本次用时: ' + seconds + '秒', x: 30, y: 120, size: 12, align: 'left' });
-    lines.push({ text: '已玩游戏: ' + played, x: 30, y: 148, size: 12, align: 'left' });
-    lines.push({ text: '已胜游戏: ' + won, x: 30, y: 176, size: 12, align: 'left' });
-    lines.push({ text: '百分比: ' + percent + '%', x: 30, y: 204, size: 12, align: 'left' });
+    let y = 88;
+    for (const r of rows) {
+      lines.push({ text: r, x: 30, y: y, size: 12, align: 'left' });
+      y += 22;
+    }
+    lines.push({ text: '已玩游戏: ' + played, x: 30, y: y + 10, size: 12, align: 'left' });
+    lines.push({ text: '已胜游戏: ' + won, x: 30, y: y + 34, size: 12, align: 'left' });
+    lines.push({ text: '百分比: ' + percent + '%', x: 30, y: y + 58, size: 12, align: 'left' });
     return {
       title: '最佳成绩',
-      width: 380,
-      height: 290,
+      width: 400,
+      height: 320,
       lines: lines,
       buttons: [
-        { id: 'close', label: '确定', x: 140, y: 238, w: 100, h: 26 }
+        { id: 'close', label: '确定', x: 160, y: 268, w: 100, h: 26 }
       ]
     };
   }
 
   /**
    * 「关于扫雷」对话框（菜单 帮助 → 关于扫雷）
+   *
+   * 版式按参考实现截图 about.jpg 实测：左边一个雷图标，右边三行说明，
+   * 右下角一个「确定」按钮（默认按钮，蓝框）。
    */
   static aboutSpec(): DlgSpec {
     return {
-      title: '关于扫雷',
-      width: 360,
-      height: 250,
+      title: '关于 扫雷',
+      width: 304,
+      height: 196,
+      icon: [0, 0, 25, 25],
+      iconPos: [28, 72, 25, 25],
       lines: [
-        { text: '扫雷', x: 180, y: 44, size: 16, align: 'center' },
-        { text: 'Windows 7 扫雷的 HarmonyOS 移植版', x: 180, y: 86, size: 12, align: 'center' },
-        { text: '单指点击开格，长按插旗，双击和弦，', x: 180, y: 116, size: 12, align: 'center' },
-        { text: '双指捏合缩放，单指拖动平移', x: 180, y: 138, size: 12, align: 'center' }
+        { text: 'HarmonyOS 移植版', x: 80, y: 66, size: 12, align: 'left' },
+        { text: '原版：Windows 7 扫雷', x: 80, y: 91, size: 12, align: 'left' },
+        { text: '适配：华为 Pura X Max 折叠屏', x: 80, y: 116, size: 12, align: 'left' }
       ],
       buttons: [
-        { id: 'close', label: '确定', x: 130, y: 196, w: 100, h: 26 }
+        { id: 'close', label: '确定', x: 203, y: 153, w: 85, h: 22 }
       ]
     };
   }

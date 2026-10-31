@@ -22,6 +22,8 @@ export class SpriteAtlas {
   gameSheet: image.PixelMap | null = null;
   /** otherSheet：时钟、踩雷动画、拆雷动画、胜利扫描条 */
   otherSheet: image.PixelMap | null = null;
+  /** face.png：状态条上的笑脸按钮（1:1 的独立图，不是 2 倍图集） */
+  faceSheet: image.PixelMap | null = null;
   /** Frame.png：棋盘区底板（九宫格，1 倍）。实测这张图上下颠倒、角落还藏着状态条素材，
    *  九宫格不能直接用，本项目不加载它 */
   frameSheet: image.PixelMap | null = null;
@@ -44,6 +46,7 @@ export class SpriteAtlas {
     this.boardSheet = await SpriteAtlas.loadPixelMap(ctx, 'blueSheet.png');
     this.gameSheet = await SpriteAtlas.loadPixelMap(ctx, 'minesweeperSheet.png');
     this.otherSheet = await SpriteAtlas.loadPixelMap(ctx, 'otherSheet.png');
+    this.faceSheet = await SpriteAtlas.loadPixelMap(ctx, 'face.png');
     this.loaded = true;
     console.info('[SpriteAtlas] 图集加载完成 board=' + (this.boardSheet !== null) +
       ' game=' + (this.gameSheet !== null) + ' other=' + (this.otherSheet !== null));
@@ -88,6 +91,25 @@ export class SpriteAtlas {
     const sw = srcRect[2] * SPRITE_SCALE * s;
     const sh = srcRect[3] * SPRITE_SCALE * s;
     ctx.drawImage(sheet, sx, sy, sw, sh, dx * s, dy * s, dw * s, dh * s);
+  }
+
+  /**
+   * 画一张 **1:1** 的独立图（源矩形不乘 SPRITE_SCALE）。
+   *
+   * 图集里的素材都是 2 倍图（存 36 像素画 18 单位），但 face.png 是单独抠出来的
+   * 14×14 原图，再乘 2 就取不到东西了，所以单独给一条通道。
+   *
+   * @param srcRect 逻辑坐标 [x, y, w, h]（= 源像素，1:1）
+   * @param dx,dy,dw,dh 目标矩形（**设备像素**，内部换算成 vp）
+   */
+  drawRaw(ctx: CanvasRenderingContext2D, sheet: image.PixelMap | null,
+    srcRect: number[], dx: number, dy: number, dw: number, dh: number): void {
+    if (sheet === null) {
+      return;
+    }
+    const s = this.pxScale;
+    ctx.drawImage(sheet, srcRect[0] * s, srcRect[1] * s, srcRect[2] * s, srcRect[3] * s,
+      dx * s, dy * s, dw * s, dh * s);
   }
 
   /**

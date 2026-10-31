@@ -68,6 +68,15 @@ export const RECT_PANEL_MINE: number[] = [0, 0, 25, 25];
 
 /** 时钟图标（银色圆钮装时钟） */
 export const RECT_CLOCK: number[] = [905, 425, 25, 25];
+/**
+ * 笑脸按钮（从真 Win7 素材 helpBoard.png 的帮助插图里抠出来的 14×14 原图，
+ * 单独存成 rawfile/face.png，所以是 1:1 的图，不是 2 倍图集）。
+ *
+ * 真 Win7 的状态条顺序见 SPEC §5.5：**左侧 [笑脸][雷数面板] …… [计时面板][雷图标]**。
+ * 之前按某个复刻做成了 [时钟][计时面板]…[雷数面板][雷图标]，左右弄反了，
+ * 依据是微软自己的 helpBoard.png（真 Win7 帮助窗口的插图）。
+ */
+export const RECT_FACE: number[] = [0, 0, 14, 14];
 
 /** 踩雷动画帧（雷），23 帧 / 1 秒 */
 export const TRIP_FRAMES: number = 23;
@@ -123,6 +132,9 @@ export const COLOR_SUNKEN: string = '#4c556f';
 
 /** 状态条离棋盘下沿的高度（原版是窗口下边框，32 单位高） */
 export const STRIP_BAND: number = 32;
+
+/** 笑脸直径（真 Win7 里比计数面板略高一点） */
+export const STRIP_FACE_SIZE: number = 24;
 /** 时钟图标 25×25 */
 export const STRIP_CLOCK_SIZE: number = 25;
 /** 计数面板 40×21（实测原版 40×22，取素材里的 40×21） */
