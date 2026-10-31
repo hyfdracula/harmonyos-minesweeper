@@ -57,7 +57,7 @@ const SEG_G: number = 64;
 /** 0..9 的段组合（经典七段编码，位序 a,b,c,d,e,f,g） */
 const DIGIT_MASKS: number[] = [
   0x3F, // 0: a b c d e f
-  0x8E, // 1: b c d + 衬线旗（SEG_FLAG）
+  0x186, // 1: b c + 衬线旗(SEG_FLAG) + 衬线底横(SEG_BASE1)
   0x5B, // 2: a b g e d
   0x4F, // 3: a b g c d
   0x66, // 4: f g b c
@@ -72,11 +72,23 @@ const DIGIT_MASKS: number[] = [
  * 「1」左上角那撮小旗（**第 8 段**，不属于标准七段）。
  *
  * 证据：微软原图 helpBoard.png 的计时「18」里，「1」不是光秃秃两根竖段 ——
- * 右上带一撮斜的小旗、底下带一撮横的底衬（把 helpBoard.png 的计时面板放大 12 倍
- * 就能看清，见 docs\verify\ORIG_COUNTERS_12x.png 上排）。
+ * 逐像素读出来是（x 61..65 是这个数字格，y 181..186 是六行）：
+ *   行 181：x=61 一小块（旗）+ x=63 竖笔顶
+ *   行 182..185：x=63 竖笔
+ *   行 186：x=61..65 一条底横（衬线，横跨竖笔**两侧**）
+ * 即：竖笔在格的**右边**，旗贴在竖笔左上角，底横以竖笔为中心向两侧伸出。
  * 没有它，「1」在深蓝凹槽里会显得又窄又怪，和原版差一截。
  */
 const SEG_FLAG: number = 128;
+
+/**
+ * 「1」底下那条**衬线底横**（第 9 段）。
+ *
+ * 注意它**不是**标准的 d 段：标准 d 横跨格宽的中间（x 3..8），
+ * 而原图的底横是以竖笔（x 9..11）为中心向两侧伸出（x 7..11）——
+ * 所以这里单独画，不复用 d。
+ */
+const SEG_BASE1: number = 256;
 
 /** 负号：只亮中段 g（与 helpBoard 里「-40」的横杠位置一致） */
 const MASK_MINUS: number = SEG_G;
@@ -189,9 +201,16 @@ export class SevenSeg {
           cellY + SevenSeg.TH + SevenSeg.HL, SevenSeg.CELL_W - 2 * SevenSeg.TV, SevenSeg.TH, sDev, pxScale);
       }
       if ((mask & SEG_FLAG) !== 0) {
-        // 「1」右上角的小旗：紧挨 b 竖段左上角的一块小斜台
-        SevenSeg.rect(ctx, devX0, devY0, cellX + SevenSeg.TV - 2, cellY + SevenSeg.TH,
+        // 「1」左上角的小旗：**紧挨 b 竖段（x 9..11）的左沿**（x 7..8），
+        // 高度对齐 b 的上端。原图 helpBoard 里旗就在竖笔左上角紧贴着。
+        SevenSeg.rect(ctx, devX0, devY0, cellX + SevenSeg.CELL_W - SevenSeg.TV - 2, cellY + SevenSeg.TH,
           2, 2, sDev, pxScale);
+      }
+      if ((mask & SEG_BASE1) !== 0) {
+        // 「1」的衬线底横：在**最下一行**，以竖笔（x 9..11）为中心向两侧伸出（x 7..11）。
+        // 不是标准 d 段（d 是横跨格宽中间的 x 3..8），所以单独画。
+        SevenSeg.rect(ctx, devX0, devY0, cellX + SevenSeg.CELL_W - SevenSeg.TV - 2,
+          cellY + SevenSeg.CELL_H - SevenSeg.TH, SevenSeg.TV + 2, SevenSeg.TH, sDev, pxScale);
       }
     }
   }
