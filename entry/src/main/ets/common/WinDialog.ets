@@ -344,9 +344,13 @@ export class WinDialogPainter {
       chrome: 'aero',
       lines: lines,
       // win.jpg 按钮：① x=23..158 y=252..278  ② x=23..158 y=286..312（w=136 h=27）
+      //
+      // 2026-11-01：第二个按钮原来写的是「退出(Q)」，与失败框的「退出(X)」、菜单里
+      // 「退出 / X」都不一致（同一个应用里同一个动作两个快捷字母），改成 (X)。
+      // 顺带与参考图对齐：Lmy 克隆的 win.jpg 上这个按钮写的就是「退出(X)」。
       buttons: [
         { id: 'again', label: '再玩一局(P)', x: 23, y: 252, w: 136, h: 27 },
-        { id: 'exit', label: '退出(Q)', x: 23, y: 286, w: 136, h: 27 }
+        { id: 'exit', label: '退出(X)', x: 23, y: 286, w: 136, h: 27 }
       ]
     };
   }
