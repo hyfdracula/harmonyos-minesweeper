@@ -156,6 +156,67 @@ export const STRIP_PANEL_H: number = 21;
 /** 图标与面板之间的空隙 */
 export const STRIP_GAP: number = 6;
 
+// ---- 外观（Appearance）：棋盘样式 / 游戏样式 ---------------------------------
+
+/**
+ * 棋盘样式：蓝色（Silver and Blue）/ 绿色（Green）。
+ *
+ * 证据：原版 Win7 的「外观」对话框有两组单选图示 —— Select Game Style
+ * （Minesweeper / Flower Garden）与 Select Board（Silver and Blue / Green），
+ * 见 linux-minesweeper/src/ui/AppearanceDialog.cpp:151-164。
+ * 素材：greenSheet.png 与 blueSheet.png 同为 2034×1206，**逐区域同构**
+ * （数字/旗/问号/高亮/红叉/阴影逐字节相同），唯一差异是胜利拆雷动画的基址。
+ */
+export enum BoardStyle {
+  Blue = 0,
+  Green = 1
+}
+
+/**
+ * 游戏样式：扫雷（Minesweeper）/ 花园（Flower Garden）。
+ *
+ * 对应 minesweeperSheet.png（地雷）与 flowerGardenSheet.png（花朵）。
+ */
+export enum GameStyle {
+  Mines = 0,
+  Flowers = 1
+}
+
+/**
+ * 胜利「拆雷」动画的基址（逻辑 x）。
+ *
+ * otherSheet.png 里并排放着两套拆雷动画：蓝色从逻辑 x=0 起，绿色从 x=364 起
+ * （7 帧 × (50+2) = 364）。证据：linux-minesweeper/src/ui/Theme.h:146-151
+ * `disarmFrame(BoardStyle s, int frame)` 里的 `x0 = Green ? 364 : 0`。
+ */
+export const DISARM_BASE_BLUE: number = 0;
+export const DISARM_BASE_GREEN: number = 364;
+
+/**
+ * 按棋盘样式取拆雷动画的源矩形（逻辑坐标）。
+ *
+ * 蓝色版就是 Anim.disarmRect 的结果（基址 0），绿色版整体右移 364。
+ */
+export function disarmRectFor(frame: number, style: BoardStyle): number[] {
+  const f = Math.max(0, Math.min(37, frame));
+  const x0 = style === BoardStyle.Green ? DISARM_BASE_GREEN : DISARM_BASE_BLUE;
+  return [x0 + 52 * (f % 7), 152 * Math.floor(f / 7), 50, 150];
+}
+
+/**
+ * 花园版的踩雷（开花）动画帧（otherSheet 逻辑坐标）。
+ *
+ * 花园帧在 otherSheet 的逻辑 x=905 起，每帧 36×36（雷版在 x=728，每帧 57×57）。
+ * 证据：linux-minesweeper/src/ui/Theme.h:126-131 `tripFrame(GameStyle g, int frame)`。
+ */
+export function flowerTripRect(frame: number): number[] {
+  const f = Math.max(0, Math.min(22, frame));
+  return [905 + 38 * (f % 3), 38 * Math.floor(f / 3), 36, 36];
+}
+
+/** 花园版踩雷动画的绘制偏移 */
+export const FLOWER_TRIP_OFFSET: number[] = [-9, -9];
+
 /**
  * 状态条两组元素离棋盘左右沿的距离。
  *

@@ -16,7 +16,9 @@ import { SpriteAtlas } from './SpriteAtlas';
 import { WinDialogPainter, DlgSpec } from './WinDialog';
 import { GameStats } from './GameStats';
 import { SoundPlayer, Sound } from './SoundPlayer';
-import { WinMenuPainter, MenuSpec, MENU_BAR_H } from './WinMenu';
+import { WinMenuPainter, MenuSpec, MENU_BAR_H, appearanceEntry } from './WinMenu';
+import { Appearance } from './Appearance';
+import { SevenSeg } from './SevenSeg';
 import { CustomField, CustomSpec, DLG_W, DLG_H } from './CustomField';
 import { NumKeypad } from './NumKeypad';
 import { Anim } from './Anim';
@@ -28,7 +30,8 @@ import {
   gradientFrame, normalTileRect, pressedTileRect, RECT_FLAG, RECT_QUESTION, RECT_HILITE, RECT_MISFLAG,
   RECT_SHADOW_U, RECT_SHADOW_L, RECT_COUNTER, digitRect, RECT_MINE, RECT_PANEL_MINE, RECT_CLOCK,
   COLOR_OUTSIDE, COLOR_FLOOR, COLOR_SUNKEN,
-  STRIP_BAND, STRIP_CLOCK_SIZE, STRIP_PANEL_W, STRIP_PANEL_H, STRIP_GAP, stripMargin
+  STRIP_BAND, STRIP_CLOCK_SIZE, STRIP_PANEL_W, STRIP_PANEL_H, STRIP_GAP, stripMargin,
+  disarmRectFor, GameStyle, flowerTripRect, FLOWER_TRIP_OFFSET, BoardStyle
 } from './Theme';
 
 /** 难度档位（与原版一致） */
@@ -76,6 +79,10 @@ export class GameController {
   boardX: number = 0;
   boardY: number = 0;
   tile: number = 36;
+  /** 状态条带的顶边，设备像素。竖向溢出时**钉在画布底边**（HUD），否则贴在棋盘下沿 */
+  stripTop: number = 0;
+  /** 棋盘能用的纵向高度（菜单栏下沿 ~ 状态条上沿），设备像素 */
+  boardAreaH: number = 0;
 
   /** 计时（秒） */
   seconds: number = 0;
@@ -260,27 +267,27 @@ export class GameController {
         break;
       }
     }
-    // 装得下的那一档如果格子小到点不准，就往上抬一档，让棋盘横向超出画布，
-    // 靠平移看（`clampPan` 本来就支持）。
+    // 「整块装得下」优先；但整块装得下的那一档**格边 < 48 px 时，宁可溢出也要够大**：
+    // 抬到格边 ≥ 48 的那一档，允许棋盘纵向溢出（顶对齐 + 状态条钉画布底边当 HUD）。
     //
-    // 为什么：30 列的局在窄屏（外屏 1323 px / Mate 90 Pro 1280 px）上宽度是几何必然，
+    // 为什么：用户原话「外屏不接受降级，我希望可以拖动放大」——**小到点不准比溢出更糟**。
+    // 30 列的局在窄屏（外屏 1323 px / Mate 90 Pro 1280 px）上宽度是几何必然，
     // 装得下的那一档只有 n=1（格边 36 px ≈ 10~13 vp），手指根本点不准。
-    // 用户的原话是「外屏不接受降级，我希望可以拖动放大」——宁可超宽也要能点准。
     //
-    // 坑（2026-10-31，LEAD-CHANGE-AUDIT 的 L1）：**不能无条件抬**。
-    // 抬一档会让棋盘同时纵向溢出，而纵向居中会把棋盘顶部推到菜单栏底下——
+    // 坑（2026-10-31，LEAD-CHANGE-AUDIT 的 L1）：不能无条件抬。
+    // 抬档会让棋盘同时纵向溢出，而纵向居中会把棋盘顶部推到菜单栏底下——
     // 那几行既看不见也点不着（菜单栏的点击归菜单）。
-    // 所以抬档的前提是「抬完纵向仍然装得下」，或者「横向本来就装不下」
-    // （反正要平移，纵向溢出无所谓，只需顶对齐）。
+    // 现在两件事一起兜住：① 纵向装不下时**顶对齐**菜单栏下沿；② 状态条**钉在画布底边**
+    // （HUD），所以溢出时计时与雷数仍然看得见。
+    //
+    // 坑（2026-10-31，LAYOUT-MATRIX v3.0 §4.2 B）：「抬完纵向装得下才抬」这条旧前提
+    // 会把 Pura X Max 典藏版内屏（2584×1824）的 24×30 自定义局卡在 n=1：
+    // 格边 36 px = 13.09 vp，点不准；抬到 n=2（格边 72 px = 26 vp）会纵向超出 90 px。
+    // 现在**一律抬到格边 ≥ 48 的那一档**，纵向溢出交给顶对齐 + HUD 处理。
     if (TILE * 2 * fit < MIN_CELL_PX && fit < MAX_SCALE_INDEX) {
-      const u2 = 2 * (fit + 1);
-      const bw2 = e.colCount * TILE * u2;
-      const bh2 = e.rowCount * TILE * u2 + STRIP_BAND * u2;
-      const fitsV = menuPx + bh2 <= this.canvasH;
-      const widthBinding = e.colCount * TILE * 2 * fit > this.canvasW;
-      if (fitsV || widthBinding) {
-        fit = fit + 1;
-      }
+      // 最小可点档：格边 ≥ MIN_CELL_PX 的最小 n（48 / 36 = 1.33 → 2）
+      const minTouchN: number = Math.ceil(MIN_CELL_PX / (TILE * 2));
+      fit = Math.min(MAX_SCALE_INDEX, Math.max(fit + 1, minTouchN));
     }
     this.fitScaleIndex = fit;
     // 2) 用户没手动缩放过就用适配档；缩放过就保留用户的档位（折叠换屏时不丢视角）
@@ -316,16 +323,26 @@ export class GameController {
     this.frameW = boardW;
     this.frameH = boardH + STRIP_BAND * u;
     this.frameX = Math.round((this.canvasW - this.frameW) / 2) + this.panX;
-    // 纵向：从菜单栏下沿往下，把「棋盘 + 状态条」这一组在剩余空间里居中；
-    // 但**装不下时顶对齐**——居中会把顶部推到菜单栏底下，那几行既看不见也点不着
-    // （LEAD-CHANGE-AUDIT 的 L1）。
-    const availH: number = Math.max(1, this.canvasH - this.menuBarPx());
-    const frameYBase: number = this.frameH > availH
-      ? this.menuBarPx()
-      : this.menuBarPx() + Math.round((availH - this.frameH) / 2);
+    const menuPx: number = this.menuBarPx();
+    const availH: number = Math.max(1, this.canvasH - menuPx);
+    const stripH: number = STRIP_BAND * u;
+    // 状态条的位置：**竖向装得下就贴在棋盘下沿；装不下就钉在画布底边**（像 HUD）。
+    //
+    // 坑（2026-10-31，LAYOUT-MATRIX v3.0 §3）：状态条原来画在 boardBottom 之下，
+    // 棋盘纵向溢出时整条状态条会掉到屏幕外——计时和雷数都看不见（和横向超宽时
+    // 雷数计数器跑出屏幕是同一类问题）。钉到画布底边后，无论棋盘多大都看得见。
+    const stripBelowBoard: boolean = menuPx + boardH + stripH <= this.canvasH;
+    const hudTop: number = this.canvasH - stripH;
+    // 棋盘能用的纵向空间：装得下就用「菜单栏下沿 ~ 画布底」；钉 HUD 时只到 HUD 顶
+    this.boardAreaH = stripBelowBoard ? availH : Math.max(1, hudTop - menuPx);
+    // 装不下就顶对齐菜单栏下沿（居中会把顶部推到菜单栏底下，那几行既看不见也点不着）
+    const frameYBase: number = boardH > this.boardAreaH
+      ? menuPx
+      : menuPx + Math.round((this.boardAreaH - boardH) / 2);
     this.frameY = frameYBase + this.panY;
     this.boardX = this.frameX;
     this.boardY = this.frameY;
+    this.stripTop = stripBelowBoard ? (this.boardY + boardH) : hudTop;
   }
 
   /** 菜单栏高度（设备像素） */
@@ -341,12 +358,16 @@ export class GameController {
    * 板子比视口大时允许拖动，且两边都能拖到。
    */
   private clampPan(): void {
-    const availH: number = Math.max(1, this.canvasH - this.menuBarPx());
+    const e = this.engine;
     // 坑（2026-10-31）：原来 limX/limY 用 |(画布-底板)/2|，**放得下的时候也允许拖**，
     // 于是初级局能把棋盘拖到偏出屏幕。现在改成：放得下就不许拖，放不下才给
     // (内容-可视)/2 的余量，保证两边都能拖到。
     const limX: number = this.frameW > this.canvasW ? (this.frameW - this.canvasW) / 2 : 0;
-    const limY: number = this.frameH > availH ? (this.frameH - availH) / 2 : 0;
+    // 纵向按**棋盘**与「菜单栏下沿 ~ 状态条上沿」这块可视区比：
+    // 状态条钉在画布底边（HUD）时，可视区要减去状态条那条带子，
+    // 否则最后一行会被 HUD 压住却还允许往下拖。
+    const boardH: number = e.rowCount * this.tile;
+    const limY: number = boardH > this.boardAreaH ? (boardH - this.boardAreaH) / 2 : 0;
     this.panX = Math.max(-limX, Math.min(limX, this.panX));
     this.panY = Math.max(-limY, Math.min(limY, this.panY));
   }
@@ -520,9 +541,11 @@ export class GameController {
             if (Anim.tripActive && idx === Anim.tripCell) {
               // 原版帧是 57x57 的整块（含溢出格子的部分），按原版偏移 (-18,-18) 画，
               // 不能居中缩放，否则爆炸会缩水。
-              const rect = Anim.explodeRect(Anim.tripFrame);
+              const isFlower = this.atlas.gameStyle === GameStyle.Flowers;
+              const rect = isFlower ? flowerTripRect(Anim.tripFrame) : Anim.explodeRect(Anim.tripFrame);
+              const off = isFlower ? FLOWER_TRIP_OFFSET : Anim.EXPLODE_OFFSET;
               this.atlas.draw(ctx, this.atlas.otherSheet, rect,
-                x + Anim.EXPLODE_OFFSET[0] * u, y + Anim.EXPLODE_OFFSET[1] * u,
+                x + off[0] * u, y + off[1] * u,
                 rect[2] * u, rect[3] * u);
             }
           } else if (cell.mine) {
@@ -590,7 +613,7 @@ export class GameController {
       const c = cell - r * this.engine.colCount;
       const x = this.boardX + c * this.tile + Anim.DISARM_OFFSET[0] * u;
       const y = this.boardY + r * this.tile + Anim.DISARM_OFFSET[1] * u;
-      this.atlas.drawLogical(ctx, this.atlas.otherSheet, Anim.disarmRect(f), x, y, u);
+      this.atlas.drawLogical(ctx, this.atlas.otherSheet, disarmRectFor(f, this.atlas.boardStyle), x, y, u);
     }
     // 2) 扫描条
     const barY = this.scanBarY();
@@ -724,35 +747,42 @@ export class GameController {
   private drawStatusStrip(ctx: CanvasRenderingContext2D): void {
     const u = this.unit;
     const e = this.engine;
-    const boardBottom = this.boardY + e.rowCount * this.tile;
     const boardRight = this.boardX + e.colCount * this.tile;
     const margin = stripMargin(e.colCount) * u;
+    // 纵向：状态条带的顶边。竖向装得下时贴在棋盘下沿；棋盘纵向溢出时
+    // **钉在画布底边**（HUD），保证计时与雷数永远看得见。
+    const stripTop = this.stripTop;
 
     // 左端：时钟 + 计时面板
-    const clockX = this.boardX + margin;
-    const clockY = boardBottom + Math.round((STRIP_BAND - STRIP_CLOCK_SIZE) / 2) * u;
+    // 锚点用 **max(棋盘左沿 + margin, margin)**：棋盘比屏幕宽时（30 列的局在窄屏上
+    // 棋盘宽 2160px、屏宽 1280px），原来时钟钉在棋盘左沿 = 屏外 440px，
+    // 雷数钉在棋盘右沿 = 屏外 440px —— **两个计数都看不见**，而且数字是居中画在面板里的，
+    // 露出来的那条面板边也不含数字（实测见 docs\CLICK-MATRIX-90P.md 收官补测）。
+    // 现在两端都「贴住屏幕边」，无论棋盘多宽都同时可见。
+    const clockX = Math.max(this.boardX + margin, margin);
+    const clockY = stripTop + Math.round((STRIP_BAND - STRIP_CLOCK_SIZE) / 2) * u;
     const timeX = clockX + (STRIP_CLOCK_SIZE + STRIP_GAP) * u;
-    const timeY = boardBottom + Math.round((STRIP_BAND - STRIP_PANEL_H) / 2) * u;
+    const timeY = stripTop + Math.round((STRIP_BAND - STRIP_PANEL_H) / 2) * u;
 
-    // 右端：雷数面板 + 雷图标
-    const iconX = boardRight - margin - STRIP_CLOCK_SIZE * u;
-    const iconY = boardBottom + Math.round((STRIP_BAND - STRIP_CLOCK_SIZE) / 2) * u;
+    // 右端：雷数面板 + 雷图标（同样贴住屏幕右沿）
+    const iconX = Math.min(boardRight - margin - STRIP_CLOCK_SIZE * u,
+      this.canvasW - margin - STRIP_CLOCK_SIZE * u);
+    const iconY = stripTop + Math.round((STRIP_BAND - STRIP_CLOCK_SIZE) / 2) * u;
     const mineX = iconX - (STRIP_GAP + STRIP_PANEL_W) * u;
-    const mineY = boardBottom + Math.round((STRIP_BAND - STRIP_PANEL_H) / 2) * u;
+    const mineY = stripTop + Math.round((STRIP_BAND - STRIP_PANEL_H) / 2) * u;
 
     this.atlas.drawLogical(ctx, this.atlas.otherSheet, RECT_CLOCK, clockX, clockY, u);
     this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, timeX, timeY, u);
     this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, mineX, mineY, u);
     this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_PANEL_MINE, iconX, iconY, u);
 
-    // 字号单位：Canvas 的 font 里 "px" 是**设备像素**（与画布坐标的 vp 不是一回事，
-    // 真机实测：写成 vp 换算值会让数字小 2.75 倍）。原版字高约 9 单位 → 字号约 12 单位。
-    ctx.font = `bold ${12 * u}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(`${this.seconds}`, this.v(timeX + STRIP_PANEL_W * u / 2), this.v(timeY + STRIP_PANEL_H * u / 2));
-    ctx.fillText(`${e.minesRemaining()}`, this.v(mineX + STRIP_PANEL_W * u / 2), this.v(mineY + STRIP_PANEL_H * u / 2));
+    // 两个计数器用**七段数码管**画，不是字体。
+    // 权威证据：微软原版 helpBoard.png 的状态条里「18」是七段、「-40」带独立负号段。
+    // 几何见 docs\SEVEN-SEG-COUNTER.md（七段渲染器在 SevenSeg.ets）。
+    // 单位换算：面板是 40u×21u 设备像素 ⇒ 一个参考像素 = u 设备像素 = u·pxScale vp。
+    const segVp: number = u * this.pxScale;
+    SevenSeg.draw(ctx, this.seconds, this.v(timeX), this.v(timeY), segVp, u);
+    SevenSeg.draw(ctx, e.minesRemaining(), this.v(mineX), this.v(mineY), segVp, u);
   }
 
   // ------------------------------------------------------------------ 交互
@@ -877,6 +907,13 @@ export class GameController {
     this.gameOverNotified = true;
     const won = s === GameState.Won;
     SoundPlayer.play(won ? Sound.GAME_WIN : Sound.GAME_LOSE);
+    if (!won && this.atlas.gameStyle === GameStyle.Flowers) {
+      // 花园模式判负：换成三段花朵音效（雷数 ≤10 Short / ≤40 Medium / 更多 Long）
+      const left: number = Math.abs(this.engine.minesRemaining());
+      const name: string = left <= 10 ? Sound.FLOWER_LOSE_SHORT
+        : (left <= 40 ? Sound.FLOWER_LOSE_MEDIUM : Sound.FLOWER_LOSE_LONG);
+      SoundPlayer.play(name);
+    }
     if (!won) {
       // 判负：先播完爆炸动画，再弹对话框（原版就是先炸后弹）
       const cell = this.explodedCellIndex();
@@ -1169,12 +1206,14 @@ export class GameController {
     }
   }
 
-  /** 打开一个「菜单触发的」对话框（最佳成绩 / 关于） */
+  /** 打开一个「菜单触发的」对话框（最佳成绩 / 关于 / 颜色） */
   openInfoDialog(kind: string): void {
     if (kind === 'best') {
       // 原版的「最佳成绩」是独立的**扫雷统计信息窗口**（information.jpg 的版式）
       this.openStatsWindow();
       return;
+    } else if (kind === 'appearance') {
+      this.dialog = Appearance.begin(this.atlas.boardStyle, this.atlas.gameStyle);
     } else if (kind === 'help') {
       this.dialog = WinDialogPainter.helpSpec();
     } else {
@@ -1413,7 +1452,26 @@ export class GameController {
       return null;
     }
     this.dialogLayout();
-    return WinDialogPainter.hitButton(d, this.dialogScale, this.dialogOx, this.dialogOy, px, py);
+    const hit = WinDialogPainter.hitButton(d, this.dialogScale, this.dialogOx, this.dialogOy, px, py);
+    // 「颜色」对话框：缩略图切换 / 确定 / 取消 —— 自己处理，不往上抛
+    if (hit !== null && Appearance.owns(hit)) {
+      if (hit === 'appearance:ok') {
+        this.atlas.applyStyle(Appearance.pendingBoard, Appearance.pendingGame);
+        // 原版重启后保留外观 ✓ → 存进 preferences
+        GameStats.saveStyle(
+          Appearance.pendingBoard === BoardStyle.Green ? 1 : 0,
+          Appearance.pendingGame === GameStyle.Flowers ? 1 : 0).catch(() => {
+        });
+        this.dialog = null;
+      } else if (hit === 'appearance:cancel') {
+        this.dialog = null;
+      } else if (Appearance.select(hit)) {
+        this.dialog = Appearance.spec();
+      }
+      this.draw();
+      return null;
+    }
+    return hit;
   }
 
   /** 关闭结束对话框（比如重新开局时） */
@@ -1445,6 +1503,7 @@ export class GameController {
             { id: 'sound', label: '声音', checked: SoundPlayer.isEnabled },
             { id: 'sep3', label: '', separator: true },
             { id: 'best', label: '最佳成绩' },
+            appearanceEntry(),
             { id: 'sep4', label: '', separator: true },
             { id: 'exit', label: '退出', accelerator: 'X' }
           ]

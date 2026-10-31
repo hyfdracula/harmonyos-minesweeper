@@ -64,7 +64,7 @@ struct Index {
         this.controller.refreshMenu();
       } else if (action === 'marks') {
         this.controller.toggleQuestionMarks();
-      } else if (action === 'best' || action === 'about' || action === 'help') {
+      } else if (action === 'best' || action === 'about' || action === 'help' || action === 'appearance') {
         this.controller.openInfoDialog(action);
       } else if (action === 'custom') {
         this.controller.openCustomDialog();

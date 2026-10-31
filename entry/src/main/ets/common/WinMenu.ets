@@ -2,10 +2,12 @@
  * WinMenu.ets —— Windows 7 风格的菜单栏（游戏 / 帮助）
  *
  * 原版扫雷窗口顶部就是一条 Win7 菜单栏：
- *   游戏：新建(F2) / 初级 / 中级 / 高级 / 自定义 / 标记(?) / 颜色 / 声音 / 最佳成绩 / 退出
+ *   游戏：新建(F2) / 初级 / 中级 / 高级 / 自定义 / 标记(?) / 声音 / 最佳成绩 / 外观(F7) / 退出
  *   帮助：帮助(H) / 关于扫雷(A)
  * 本实现把菜单栏直接画在画布顶部（原版菜单栏也在窗口内，不是系统浮层），
  * 下拉菜单同样是画布绘制，命中测试用几何矩形。
+ *
+ * 「外观」项的条目由 appearanceEntry() 提供，文案见 Appearance.ets。
  *
  * 单位（与 WinDialog 一致）：
  *   几何坐标用 vp；font 里的 "px" 是设备像素，所以字号要传设备像素值。
@@ -47,6 +49,8 @@
  *   菜单栏的「已展开」高亮态参考图同样没有，按 Win7 观感做成淡蓝圆角块。
  * ============================================================================
  */
+
+import { MENU_APPEARANCE_LABEL } from './Appearance';
 
 /** 菜单里的一项 */
 export interface MenuEntry {
@@ -161,6 +165,20 @@ const DROP_ACC_RIGHT: number = 12;
  *     否则 GameController.isOnMenuBar / menuActionAt 的命中区会和画出来的不一致。
  */
 export const MENU_BAR_H: number = BAR_H_REF * (APP_FONT_VP / REF_FONT_PX);
+
+/**
+ * 「外观」菜单项的显示文字与条目。
+ *
+ * 名字常量本体在 Appearance.ets（外观功能的模块自己拥有它的名字），
+ * 这里只把它包成一条菜单项给 GameController.buildMenu() 用。
+ *
+ * 文案是**占位名，待定**（2026-10-31）：refs 里找不到任何中文证据 ——
+ * 原版 Win7 只有英文串 "Change Appearance"（F7），详见
+ * Appearance.ets 里 MENU_APPEARANCE_LABEL 的注释与 docs\APPEARANCE-DIALOG.md。
+ */
+export function appearanceEntry(): MenuEntry {
+  return { id: 'appearance', label: MENU_APPEARANCE_LABEL, accelerator: 'F7' };
+}
 
 export class WinMenuPainter {
   // ------------------------------------------------------------------ 换算

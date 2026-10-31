@@ -18,6 +18,7 @@ import { common } from '@kit.AbilityKit';
 import { GameController } from '../common/GameController';
 import { GameSession } from '../common/GameSession';
 import { GameStats } from '../common/GameStats';
+import { BoardStyle, GameStyle } from '../common/Theme';
 import { SoundPlayer } from '../common/SoundPlayer';
 
 /** ArkUI 的长度可能是数字、百分比字符串或资源，这里统一取数字 */
@@ -80,6 +81,10 @@ export struct MinefieldCanvas {
     // 音效播放器需要 AbilityContext 才能取 rawfile
     SoundPlayer.init(abilityCtx);
     this.controller.atlas.load(abilityCtx).then(() => {
+      // 恢复上次的外观设置（原版重启后保留 ✓；存档读失败就还是默认蓝棋盘）
+      const bs: BoardStyle = GameStats.boardStyle === 1 ? BoardStyle.Green : BoardStyle.Blue;
+      const gs: GameStyle = GameStats.gameStyle === 1 ? GameStyle.Flowers : GameStyle.Mines;
+      this.controller.atlas.applyStyle(bs, gs);
       if (this.controller.engine.rowCount <= 0) {
         // 第一次进来：按当前难度开新局
         const cfg = GameController.configOf(this.controller.difficulty);

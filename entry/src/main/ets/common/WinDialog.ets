@@ -23,6 +23,7 @@
  *    而且 createLinearGradient 的返回值类型名在不同 SDK 版本下不稳定，故不写显式类型。
  */
 
+import { image } from '@kit.ImageKit';
 import { SpriteAtlas } from './SpriteAtlas';
 import { HELP_BOARD_W, HELP_BOARD_H } from './Theme';
 
@@ -69,6 +70,62 @@ export interface DlgImage {
   y: number;
 }
 
+/**
+ * 对话框里的一个分组框（Win7 的 GroupBox）。
+ *
+ * 只有「外观」对话框用：原版那个框有两组单选图示 —— Select Game Style
+ * 与 Select Board（linux-minesweeper/src/ui/AppearanceDialog.cpp:151-164）。
+ */
+export interface DlgGroup {
+  /** 分组标题（画在框的左上角，边框上有个缺口让字露出来） */
+  title: string;
+  /** 参考像素：相对对话框左上角 */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * 对话框里的一枚缩略图按钮（外观对话框用）。
+ *
+ * 缩略图是 **1:1 的源图**（thumbMines/thumbFlowers 92×92，thumbBlue/thumbGreen 109×109），
+ * 所以源坐标**不乘 SPRITE_SCALE**。
+ */
+export interface DlgThumb {
+  /** 点击后回传的动作标识，例如 'thumb:style:flowers' */
+  id: string;
+  /** 缩略图（null 时只画框和文字） */
+  sheet: image.PixelMap | null;
+  /** 源图宽 / 高（**源像素**） */
+  srcW: number;
+  srcH: number;
+  /** 图片区（参考像素，相对对话框左上角） */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** 说明文字（画在图下方） */
+  caption: string;
+  /** 说明文字墨迹顶（参考像素，相对对话框左上角） */
+  captionY: number;
+  /** 是否选中（选中时画蓝框 + 蓝底文字） */
+  selected: boolean;
+}
+
+/** 对话框里的一个复选框（外观对话框里那个原版有、但没实现的随机选项） */
+export interface DlgCheckBox {
+  text: string;
+  /** 方框左上角（参考像素，相对对话框左上角） */
+  x: number;
+  y: number;
+  /** 方框边长（参考像素） */
+  size: number;
+  checked: boolean;
+  /** 灰掉（不可点） */
+  disabled: boolean;
+}
+
 /** 一个对话框的全部描述 */
 export interface DlgSpec {
   title: string;
@@ -83,6 +140,12 @@ export interface DlgSpec {
   iconPos?: number[];
   /** 可选：整图（画在 helpBoardSheet 上，1:1 图，源坐标不乘 SPRITE_SCALE） */
   image?: DlgImage;
+  /** 可选：分组框（外观对话框） */
+  groups?: DlgGroup[];
+  /** 可选：缩略图按钮（外观对话框） */
+  thumbs?: DlgThumb[];
+  /** 可选：复选框（外观对话框） */
+  checkBox?: DlgCheckBox;
   /** 标题栏风格：'aero'（loss/win 的玻璃标题栏，默认）| 'classic'（about 的经典蓝灰标题栏） */
   chrome?: string;
 }
@@ -158,7 +221,7 @@ const C_BTN_BOTTOM: string = '#d1d1d1';
 /** 按钮边框。loss.jpg 按钮四边 = #707070 */
 const C_BTN_BORDER: string = '#707070';
 /** 默认按钮（about.jpg「确定」）的蓝色边框。about.jpg (358..445,254..278) 众数 = #4f7c93 */
-const C_BTN_ACCENT: string = '#4f7c93';
+const C_BTN_ACCENT: string = '#d7e0e9';
 /** 关闭按钮红（上）。loss.jpg (431,3) = #dfaeaa */
 const C_CLOSE_TOP: string = '#dfaeaa';
 /** 关闭按钮红（中）。loss.jpg (435,10) = #b04a40 */
@@ -193,6 +256,23 @@ const C_C_CLOSE_TOP: string = '#e0948a';
 const C_C_CLOSE_MID: string = '#c1655b';
 /** 关闭按钮红（下）。about.jpg (420,118) 附近 = #d99187 */
 const C_C_CLOSE_BOTTOM: string = '#d99187';
+
+// ---- 外观对话框（分组框 / 缩略图 / 复选框） -------------------------------
+
+/** 分组框边框色 */
+const C_GROUP_LINE: string = '#a0a0a0';
+/** 缩略图选中框的线色 */
+const C_THUMB_LINE: string = '#3c7fb1';
+/** 缩略图选中框的填充色 */
+const C_THUMB_FILL: string = '#dcecfb';
+/** 缩略图说明文字选中时的底色 */
+const C_THUMB_CAP_FILL: string = '#2e8be0';
+/** 复选框边框 */
+const C_CHECK_LINE: string = '#7a7a7a';
+/** 复选框底色 */
+const C_CHECK_FILL: string = '#ffffff';
+/** 灰掉（禁用）项的文字颜色 */
+const C_DISABLED: string = '#a0a0a0';
 
 export class WinDialogPainter {
   /**
@@ -320,8 +400,12 @@ export class WinDialogPainter {
       width: 314,
       height: 197,
       chrome: 'classic',
-      icon: [0, 0, 25, 25],
-      iconPos: [38, 78, 25, 25],
+      // 图标用**独立的那颗黑白尖刺地雷**（minesweeperSheet 里 x≈58..92 的那颗），
+      // 不是状态条上那颗「银色圆钮装地雷」。
+      // 证据：pixel_diff 量出原版 about.jpg 的图标区 84% 像素与我们的圆钮不同，
+      // 原版那是一颗黑白尖刺地雷（就是应用图标用的那颗）。
+      icon: [58, 4, 34, 34],
+      iconPos: [34, 72, 34, 34],
       lines: [
         { text: 'HarmonyOS 移植版', x: 86, y: 64, size: 12, align: 'left' },
         { text: '原版：Windows 7 扫雷', x: 86, y: 92, size: 12, align: 'left' },
@@ -403,7 +487,11 @@ export class WinDialogPainter {
     const cw: number = (spec.width - FRAME_X * 2) * sVp;
     const ch: number = (spec.height - TITLE_H - FRAME_Y - 1) * sVp;
     const cx: number = oxVp + FRAME_X * sVp;
-    const cy: number = oyVp + TITLE_H * sVp;
+    // 客户区顶边在 **ref y=30**（不是 29）。
+    // 坑（2026-10-31，pixel_diff 量出来的失败框客户区第 1 大差异就是这条通宽 1 像素带）：
+    // 竖扫 x=600，原版分隔线 (68,67,83) 在 ref y=29、客户区从 30 起；
+    // 我们分隔线在 28、客户区从 29 起 —— 整体高了 1 个参考像素（2 设备像素）。
+    const cy: number = oyVp + (TITLE_H + 1) * sVp;
 
     // 窗口阴影
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
@@ -464,10 +552,107 @@ export class WinDialogPainter {
         devX, devY, k, pxScale);
     }
 
+    // ---- 外观对话框：分组框 / 缩略图 / 复选框 ------------------------------
+    //
+    // 缩放约定与上面一致：几何乘 sVp（vp / 参考像素），字号乘 sDev（设备像素 / 参考像素）。
+    // pxScale = sVp / sDev 是 vp / 设备像素，用来把 measureText 的结果（设备像素）换成 vp。
+    const pxScaleV: number = sVp / sDev;
+
+    // 分组框（GroupBox）：边框 + 左上角带缺口的标题
+    if (spec.groups !== undefined) {
+      for (const g of spec.groups) {
+        const gx: number = oxVp + g.x * sVp;
+        const gy: number = oyVp + g.y * sVp;
+        const gw: number = g.w * sVp;
+        const gh: number = g.h * sVp;
+        ctx.strokeStyle = C_GROUP_LINE;
+        ctx.lineWidth = Math.max(1, sVp);
+        ctx.strokeRect(gx, gy, gw, gh);
+        // 标题：墨迹顶压在边框上，先用客户区色把那一段盖掉
+        ctx.font = `${TITLE_FONT * sDev}px sans-serif`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        const twVp: number = ctx.measureText(g.title).width * pxScaleV;
+        const inkY: number = g.y - 9;
+        ctx.fillStyle = C_CLIENT;
+        ctx.fillRect(gx + 4 * sVp, oyVp + (inkY - 3) * sVp,
+          twVp + 8 * sVp, (TITLE_FONT + 6) * sVp);
+        ctx.fillStyle = C_TEXT;
+        ctx.fillText(g.title, gx + 8 * sVp, oyVp + (inkY + TEXT_INK_DY) * sVp);
+      }
+    }
+
+    // 缩略图按钮：选中时蓝框 + 浅蓝底，说明文字压在蓝底上
+    if (spec.thumbs !== undefined) {
+      for (const t of spec.thumbs) {
+        const tx: number = oxVp + t.x * sVp;
+        const ty: number = oyVp + t.y * sVp;
+        const tw: number = t.w * sVp;
+        const th: number = t.h * sVp;
+        if (t.selected) {
+          ctx.fillStyle = C_THUMB_FILL;
+          ctx.fillRect(tx - 4 * sVp, ty - 4 * sVp, tw + 8 * sVp, th + 8 * sVp);
+          ctx.strokeStyle = C_THUMB_LINE;
+          ctx.lineWidth = Math.max(1, sVp);
+          ctx.strokeRect(tx - 4 * sVp, ty - 4 * sVp, tw + 8 * sVp, th + 8 * sVp);
+        }
+        // 缩略图本体：1:1 源图，源坐标不乘 SPRITE_SCALE
+        if (t.sheet !== null) {
+          const devX: number = Math.round(tx / pxScaleV);
+          const devY: number = Math.round(ty / pxScaleV);
+          const devW: number = Math.round(tw / pxScaleV);
+          const devH: number = Math.round(th / pxScaleV);
+          SpriteAtlas.drawWholeToRect(ctx, t.sheet, t.srcW, t.srcH,
+            devX, devY, devW, devH, pxScaleV);
+        }
+        // 说明文字
+        ctx.font = `${TITLE_FONT * sDev}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        const capW: number = ctx.measureText(t.caption).width * pxScaleV;
+        const capY: number = oyVp + (t.captionY + TEXT_INK_DY) * sVp;
+        if (t.selected) {
+          ctx.fillStyle = C_THUMB_CAP_FILL;
+          ctx.fillRect(tx + tw / 2 - capW / 2 - 6 * sVp, capY - 2 * sVp,
+            capW + 12 * sVp, (TITLE_FONT + 4) * sVp);
+          ctx.fillStyle = '#ffffff';
+        } else {
+          ctx.fillStyle = C_TEXT;
+        }
+        ctx.fillText(t.caption, tx + tw / 2, capY);
+      }
+    }
+
+    // 复选框（外观对话框里那个原版有、但没实现的随机选项）
+    if (spec.checkBox !== undefined) {
+      const cb: DlgCheckBox = spec.checkBox;
+      const bx: number = oxVp + cb.x * sVp;
+      const by: number = oyVp + cb.y * sVp;
+      const bs: number = cb.size * sVp;
+      ctx.fillStyle = C_CHECK_FILL;
+      ctx.fillRect(bx, by, bs, bs);
+      ctx.strokeStyle = C_CHECK_LINE;
+      ctx.lineWidth = Math.max(1, sVp);
+      ctx.strokeRect(bx, by, bs, bs);
+      if (cb.checked) {
+        ctx.strokeStyle = cb.disabled ? C_DISABLED : '#000000';
+        ctx.lineWidth = Math.max(1, 1.4);
+        ctx.beginPath();
+        ctx.moveTo(bx + bs * 0.22, by + bs * 0.52);
+        ctx.lineTo(bx + bs * 0.42, by + bs * 0.74);
+        ctx.lineTo(bx + bs * 0.80, by + bs * 0.26);
+        ctx.stroke();
+      }
+      ctx.fillStyle = cb.disabled ? C_DISABLED : C_TEXT;
+      ctx.font = `${TITLE_FONT * sDev}px sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(cb.text, bx + bs + 6 * sVp, by + TITLE_FONT * 0.3 * sVp);
+    }
+
     // 标题栏底部分隔线（loss.jpg y=29，整行通宽）
     ctx.fillStyle = classic ? C_C_TITLE_SEP : C_TITLE_SEP;
-    ctx.fillRect(oxVp, oyVp + (TITLE_H - 1) * sVp, w, 1 * sVp);
-
+    ctx.fillRect(oxVp, oyVp + TITLE_H * sVp, w, 1 * sVp);
     // 窗口最外沿 1px（loss.jpg x=0 / x=482 / y=0 / y=287）
     ctx.fillStyle = classic ? C_C_OUTER_LINE : C_OUTER_LINE;
     ctx.fillRect(oxVp, oyVp, w, 1 * sVp);
@@ -541,9 +726,19 @@ export class WinDialogPainter {
       bg.addColorStop(1, C_BTN_BOTTOM);
       ctx.fillStyle = bg;
       ctx.fillRect(bx, by, bw, bh);
-      ctx.strokeStyle = b.borderColor ?? C_BTN_BORDER;
-      ctx.lineWidth = Math.max(1, sVp);
-      ctx.strokeRect(bx, by, bw, bh);
+      // 边框：原版是**平涂** 1 个参考像素，画在按钮**内侧**。
+      // 之前用 strokeRect + lineWidth = Math.max(1, sVp)：sVp 在 3.5 密度下是 0.571 vp，
+      // 被抬成 1 vp = 3.5 设备像素（非整数 → 抗锯齿），而且线跨在路径两侧、
+      // 一半画到按钮外面。
+      // pixel_diff 实测（Mate 90 Pro，失败框）：原版按钮上边框是 (112,112,112) ×2 设备像素，
+      // 我们是 (148,148,148)→(110,110,110)→(148,148,148) 的四像素过渡。
+      // 这一条占了失败框客户区差异的 42%。
+      const bw1: number = 1 * sVp;
+      ctx.fillStyle = b.borderColor ?? C_BTN_BORDER;
+      ctx.fillRect(bx, by, bw, bw1);
+      ctx.fillRect(bx, by + bh - bw1, bw, bw1);
+      ctx.fillRect(bx, by + bw1, bw1, bh - 2 * bw1);
+      ctx.fillRect(bx + bw - bw1, by + bw1, bw1, bh - 2 * bw1);
       ctx.fillStyle = C_TEXT;
       ctx.font = `${BTN_FONT * sDev}px sans-serif`;
       ctx.textAlign = 'center';
@@ -556,6 +751,18 @@ export class WinDialogPainter {
 
   /** 点到哪个按钮上（设备像素坐标）；没点到返回 null */
   static hitButton(spec: DlgSpec, scale: number, ox: number, oy: number, px: number, py: number): string | null {
+    // 缩略图（外观对话框）：命中区 = 选中框（含四周 4 参考像素的留白），与 draw 一致
+    if (spec.thumbs !== undefined) {
+      for (const t of spec.thumbs) {
+        const bx: number = ox + (t.x - 4) * scale;
+        const by: number = oy + (t.y - 4) * scale;
+        const bw: number = (t.w + 8) * scale;
+        const bh: number = (t.h + 8) * scale;
+        if (px >= bx && px <= bx + bw && py >= by && py <= by + bh) {
+          return t.id;
+        }
+      }
+    }
     for (const b of spec.buttons) {
       const bx: number = ox + b.x * scale;
       const by: number = oy + b.y * scale;

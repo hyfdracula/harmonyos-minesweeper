@@ -36,6 +36,14 @@ export class GameStats {
   /** 各难度最快纪录的日期文本 */
   private static bestDate: Map<string, string> = new Map();
 
+  /**
+   * 外观设置（**原版重启后是保留的** ✓）。
+   * 0 = 蓝棋盘 / 扫雷玩法，1 = 绿棋盘 / 花园玩法。
+   * 存在这里而不是 SpriteAtlas 里，是因为它要进 preferences 存档 ✓。
+   */
+  static boardStyle: number = 0;
+  static gameStyle: number = 0;
+
   /** 读取存档（异步，失败不阻塞游戏） */
   static async load(ctx: common.UIAbilityContext): Promise<void> {
     try {
@@ -48,6 +56,8 @@ export class GameStats {
       GameStats.maxStreak = Number(await GameStats.store.get('maxStreak', 0));
       GameStats.currentLoseStreak = Number(await GameStats.store.get('currentLoseStreak', 0));
       GameStats.maxLoseStreak = Number(await GameStats.store.get('maxLoseStreak', 0));
+      GameStats.boardStyle = Number(await GameStats.store.get('boardStyle', 0));
+      GameStats.gameStyle = Number(await GameStats.store.get('gameStyle', 0));
       for (const level of GameStats.levels()) {
         const s: number = Number(await GameStats.store.get('best_' + level, -1));
         const d: string = String(await GameStats.store.get('bestDate_' + level, ''));
@@ -63,9 +73,33 @@ export class GameStats {
     }
   }
 
+  /**
+   * 保存外观设置（棋盘样式 / 游戏样式）。
+   *
+   * 原版 Win7 的「颜色」对话框选完是**持久**的：下次启动还是绿色棋盘 / 花园玩法 ✓。
+   * 之前我们只在内存里切，重启就回默认 ✗。
+   *
+   * @param board 0 = 蓝棋盘，1 = 绿棋盘
+   * @param game  0 = 扫雷玩法，1 = 花园玩法
+   */
+  static async saveStyle(board: number, game: number): Promise<void> {
+    GameStats.boardStyle = board;
+    GameStats.gameStyle = game;
+    const store = GameStats.store;
+    if (store === null) {
+      return;
+    }
+    try {
+      await store.put('boardStyle', board);
+      await store.put('gameStyle', game);
+      await store.flush();
+    } catch (err) {
+      // 存档失败不影响游戏
+    }
+  }
+
   /** 记录一局结束（level = 难度名） */
-  static async record(won: boolean, seconds: number, level: string): Promise<void> {
-    GameStats.played += 1;
+  static async record(won: boolean, seconds: number, level: string): Promise<void> {    GameStats.played += 1;
     if (won) {
       GameStats.won += 1;
       GameStats.currentStreak += 1;
