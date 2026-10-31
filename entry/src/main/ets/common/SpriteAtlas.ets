@@ -139,10 +139,15 @@ export class SpriteAtlas {
     const smooth: boolean = ctx.imageSmoothingEnabled;
     ctx.imageSmoothingEnabled = false;
     // 源矩形用 vp（API 18+ PixelMap 裁剪矩形默认单位是 vp）
+    //
+    // 坑（2026-10-31，lead 实测发现）：目标矩形要**乘** pxScale 不是除。
+    // pxScale = 1/density（vp 每设备像素），所以设备像素 → vp 是「乘 pxScale」。
+    // 原来写成 devX / pxScale，等于乘了 density（3.125 倍），
+    // 图被画到画布外十倍远的地方去，看上去就是「什么都没画」。
     ctx.drawImage(sheet,
       0, 0, srcW * pxScale, srcH * pxScale,
-      devX / pxScale, devY / pxScale,
-      srcW * scale / pxScale, srcH * scale / pxScale);
+      devX * pxScale, devY * pxScale,
+      srcW * scale * pxScale, srcH * scale * pxScale);
     ctx.imageSmoothingEnabled = smooth;
   }
 }
