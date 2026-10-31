@@ -404,8 +404,12 @@ export class WinDialogPainter {
       // 不是状态条上那颗「银色圆钮装地雷」。
       // 证据：pixel_diff 量出原版 about.jpg 的图标区 84% 像素与我们的圆钮不同，
       // 原版那是一颗黑白尖刺地雷（就是应用图标用的那颗）。
-      icon: [58, 4, 34, 34],
-      iconPos: [34, 72, 34, 34],
+      //
+      // 坐标是**逻辑像素**（drawLogical 会再乘 SPRITE_SCALE=2 变成物理像素）：
+      // 物理位置 58,4 起 34×34 ⇒ 逻辑 29,2 起 17×17 ✓
+      // （早先直接写物理坐标 58,4 会被放大成 116,8 —— 出了 94×54 的图集，画不出来。）
+      icon: [29, 2, 17, 17],
+      iconPos: [34, 72, 17, 17],
       lines: [
         { text: 'HarmonyOS 移植版', x: 86, y: 64, size: 12, align: 'left' },
         { text: '原版：Windows 7 扫雷', x: 86, y: 92, size: 12, align: 'left' },

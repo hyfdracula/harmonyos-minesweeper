@@ -57,7 +57,7 @@ const SEG_G: number = 64;
 /** 0..9 的段组合（经典七段编码，位序 a,b,c,d,e,f,g） */
 const DIGIT_MASKS: number[] = [
   0x3F, // 0: a b c d e f
-  0x0E, // 1: b c d + 衬线旗（见 SEG_FLAG）
+  0x8E, // 1: b c d + 衬线旗（SEG_FLAG）
   0x5B, // 2: a b g e d
   0x4F, // 3: a b g c d
   0x66, // 4: f g b c
