@@ -918,13 +918,17 @@ export class GameController {
     }
     this.gameOverNotified = true;
     const won = s === GameState.Won;
-    SoundPlayer.play(won ? Sound.GAME_WIN : Sound.GAME_LOSE);
-    if (!won && this.atlas.gameStyle === GameStyle.Flowers) {
-      // 花园模式判负：换成三段花朵音效（雷数 ≤10 Short / ≤40 Medium / 更多 Long）
+    if (won) {
+      SoundPlayer.play(Sound.GAME_WIN);
+    } else if (this.atlas.gameStyle === GameStyle.Flowers) {
+      // 花园模式判负：换成三段花朵音效（雷数 ≤10 Short / ≤40 Medium / 更多 Long）。
+      // 注意是**替换**而不是叠加 —— 两个播放器各自独立起播，叠加会变成两种声音同时响。
       const left: number = Math.abs(this.engine.minesRemaining());
       const name: string = left <= 10 ? Sound.FLOWER_LOSE_SHORT
         : (left <= 40 ? Sound.FLOWER_LOSE_MEDIUM : Sound.FLOWER_LOSE_LONG);
       SoundPlayer.play(name);
+    } else {
+      SoundPlayer.play(Sound.GAME_LOSE);
     }
     if (!won) {
       // 判负：先播完爆炸动画，再弹对话框（原版就是先炸后弹）
