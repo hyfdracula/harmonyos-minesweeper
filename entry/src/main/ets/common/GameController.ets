@@ -633,14 +633,45 @@ export class GameController {
       this.atlas.drawLogical(ctx, this.atlas.otherSheet, disarmRectFor(f, this.atlas.boardStyle), x, y, u);
     }
     // 2) 扫描条
-    const barY = this.scanBarY();
-    if (barY < 0) {
+    //
+    // 原版是把扫描条**裁在棋盘矩形内**的（linux-minesweeper 的
+    // BoardWidget::drawScanBar 里是 `p.setClipRect(m_grid)`），扫到顶整条消失。
+    // 我们以前把整条直接画出来，于是条停在棋盘顶上不消失；几何与裁剪都搬到
+    // Anim.scanBarRect() 了（Anim.ets 是动画模块的地盘），这里只负责取矩形并画。
+    //
+    // HUD 模式（棋盘纵向溢出、状态条钉在画布底边）下，棋盘下沿那一截被状态条压住、
+    // 根本看不见，所以扫描条只扫**看得见**的那一段（和拆雷光束的计时用同一个下沿）。
+    const boardW = this.engine.colCount * this.tile;
+    const boardBottom = this.sweepBottom();
+    const bar = Anim.scanBarRect(this.boardY, boardBottom, boardW);
+    if (bar === null) {
       return;
     }
-    const boardW = this.engine.colCount * this.tile;
-    const barH = Math.round(62 * u);
-    this.atlas.draw(ctx, this.atlas.otherSheet, Anim.SCAN_BAR,
-      this.boardX, barY, boardW, barH);
+    this.atlas.draw(ctx, this.atlas.otherSheet, [bar[0], bar[1], bar[2], bar[3]],
+      this.boardX, bar[4], bar[5], bar[6]);
+  }
+
+  /**
+   * 扫描条与拆雷光束用的「棋盘下沿」。
+   *
+   * HUD 模式下状态条钉在画布底边、压着棋盘最后 32 px，那一截看不见也点不到，
+   * 扫描条扫过去也是白扫（而且会被状态条的不透明底色盖掉），所以只扫看得见的那段。
+   */
+  private sweepBottom(): number {
+    const raw: number = this.boardY + this.engine.rowCount * this.tile;
+    return this.hudActive ? Math.min(raw, this.stripTop) : raw;
+  }
+
+  /**
+   * 扫描条的高度（设备像素）。
+   *
+   * 必须与 Anim.scanBarRect() 里的算法一致（那边按原版保持长宽比：
+   * barH = 棋盘宽 × 源高/源宽 = boardW × 62/275），否则拆雷光束的起跳时刻
+   * 会和条实际扫到那一行的时刻对不上（条到了、光束还没开始）。
+   */
+  private scanBarHeight(): number {
+    const boardW: number = this.engine.colCount * this.tile;
+    return Math.max(1, Math.round(boardW * Anim.SCAN_BAR[3] / Anim.SCAN_BAR[2]));
   }
 
   // ------------------------------------------------------------ 新局发牌动画
@@ -770,36 +801,83 @@ export class GameController {
     // **钉在画布底边**（HUD），保证计时与雷数永远看得见。
     const stripTop = this.stripTop;
 
+    // ---- HUD 模式：先把带子刷成不透明底色 --------------------------------
+    //
+    // 坑（Codex 对抗性复审 P2，2026-11-01）：HUD 模式下状态条是**压着**棋盘最后
+    // 几行的，而 hitTest() 在 stripTop 及以下一律返回 -1（点不到）。
+    // 以前只画图标和面板、不铺底色，于是被压住的那几行格子**照样看得见**，
+    // 看着能点其实点不动 —— 明确的误导。
+    // 现在先把带子铺成不透明底色（和竖向装得下时带子那块的颜色一样），
+    // 被压住的格子就彻底看不见了；它们本来就要靠纵向拖动才露得出来。
+    if (this.hudActive) {
+      ctx.fillStyle = COLOR_OUTSIDE;
+      ctx.fillRect(0, this.v(stripTop), this.v(this.canvasW), this.v(this.canvasH - stripTop));
+    }
+
+    // ---- 状态条内容自己的缩放档 su ---------------------------------------
+    //
+    // 坑（Codex 对抗性复审 P2，2026-11-01）：状态条原来跟着棋盘档位放大，
+    // 而一组计数器有 71 个参考单位宽（时钟 25 + 间隙 6 + 面板 40），两组就是 142u；
+    // 画布只有 1280 px 时 u 一旦超过 8 就放不下两组了。
+    // 实测：n=8、30 列、1280 宽屏时 margin=720px，计时面板从 x=1216 起（大半在屏外），
+    // 雷数面板整个跑到屏幕外 —— **两个计数都看不见**。
+    // 状态条是「窗口边框」性质的元素，原版里它本来就不随棋盘缩放，
+    // 所以这里给内容单独一档 su = min(u, 两组放得下的最大档)。
+    // su 必须是**偶数**：图集里的精灵是 2 倍存储像素，偶数档才能整数倍放大（不糊）。
+    const groupRef: number = STRIP_CLOCK_SIZE + STRIP_GAP + STRIP_PANEL_W;   // 71
+    const maxSu: number = 2 * Math.floor(this.canvasW / (2 * groupRef) / 2);
+    const su: number = Math.max(2, Math.min(u, maxSu));
+
+    // 贴边留白：棋盘侧的 margin 也会随 u 放大（30 列时 margin = 45u），
+    // 放大到一定程度两组会挤在一起甚至互相压。留白必须按「两组放得下」夹住。
+    const groupW: number = groupRef * su;                                  // 一组的宽
+    const anchorMargin: number = Math.min(margin,
+      Math.max(0, Math.floor((this.canvasW - 2 * groupW) / 2)));
+
     // 左端：时钟 + 计时面板
-    // 锚点用 **max(棋盘左沿 + margin, margin)**：棋盘比屏幕宽时（30 列的局在窄屏上
+    // 锚点用 **max(棋盘左沿 + margin, 留白)**：棋盘比屏幕宽时（30 列的局在窄屏上
     // 棋盘宽 2160px、屏宽 1280px），原来时钟钉在棋盘左沿 = 屏外 440px，
     // 雷数钉在棋盘右沿 = 屏外 440px —— **两个计数都看不见**，而且数字是居中画在面板里的，
     // 露出来的那条面板边也不含数字（实测见 docs\CLICK-MATRIX-90P.md 收官补测）。
     // 现在两端都「贴住屏幕边」，无论棋盘多宽都同时可见。
-    const clockX = Math.max(this.boardX + margin, margin);
-    const clockY = stripTop + Math.round((STRIP_BAND - STRIP_CLOCK_SIZE) / 2) * u;
-    const timeX = clockX + (STRIP_CLOCK_SIZE + STRIP_GAP) * u;
-    const timeY = stripTop + Math.round((STRIP_BAND - STRIP_PANEL_H) / 2) * u;
+    const clockX: number = Math.max(0, Math.min(
+      Math.max(this.boardX + margin, anchorMargin),
+      this.canvasW - groupW - anchorMargin));
+    // 内容块顶端：su === u 时**与旧实现逐像素一致**
+    // （旧写法是 Math.round((32-25)/2) * u = 4u；改成 round(3.5*u) 会差半格，
+    //   计数器的位置就变了，七段数码管的实测读数会跟着偏。）
+    // su < u（极端缩放，两组放不下）时，内容块在带子里居中。
+    const contentTop: number = (su === u)
+      ? stripTop + Math.round((STRIP_BAND - STRIP_CLOCK_SIZE) / 2) * u
+      : stripTop + Math.round((STRIP_BAND * u - STRIP_CLOCK_SIZE * su) / 2);
+    const clockY: number = contentTop;
+    const timeX: number = clockX + (STRIP_CLOCK_SIZE + STRIP_GAP) * su;
+    // 面板比时钟矮，要在时钟里垂直居中
+    const timeY: number = contentTop + Math.round((STRIP_CLOCK_SIZE - STRIP_PANEL_H) * su / 2);
 
     // 右端：雷数面板 + 雷图标（同样贴住屏幕右沿）
-    const iconX = Math.min(boardRight - margin - STRIP_CLOCK_SIZE * u,
-      this.canvasW - margin - STRIP_CLOCK_SIZE * u);
-    const iconY = stripTop + Math.round((STRIP_BAND - STRIP_CLOCK_SIZE) / 2) * u;
-    const mineX = iconX - (STRIP_GAP + STRIP_PANEL_W) * u;
-    const mineY = stripTop + Math.round((STRIP_BAND - STRIP_PANEL_H) / 2) * u;
+    let iconX: number = Math.min(boardRight - margin - STRIP_CLOCK_SIZE * su,
+      this.canvasW - anchorMargin - STRIP_CLOCK_SIZE * su);
+    // 两组不许互相压：右组（面板在左、图标在右）整体要在左组右边
+    iconX = Math.max(iconX, clockX + groupW + (STRIP_GAP + STRIP_PANEL_W) * su);
+    // 也不许跑出画布
+    iconX = Math.min(iconX, this.canvasW - STRIP_CLOCK_SIZE * su);
+    const iconY: number = contentTop;
+    const mineX: number = iconX - (STRIP_GAP + STRIP_PANEL_W) * su;
+    const mineY: number = timeY;
 
-    this.atlas.drawLogical(ctx, this.atlas.otherSheet, RECT_CLOCK, clockX, clockY, u);
-    this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, timeX, timeY, u);
-    this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, mineX, mineY, u);
-    this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_PANEL_MINE, iconX, iconY, u);
+    this.atlas.drawLogical(ctx, this.atlas.otherSheet, RECT_CLOCK, clockX, clockY, su);
+    this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, timeX, timeY, su);
+    this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_COUNTER, mineX, mineY, su);
+    this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_PANEL_MINE, iconX, iconY, su);
 
     // 两个计数器用**七段数码管**画，不是字体。
     // 权威证据：微软原版 helpBoard.png 的状态条里「18」是七段、「-40」带独立负号段。
     // 几何见 docs\SEVEN-SEG-COUNTER.md（七段渲染器在 SevenSeg.ets）。
     // 单位换算：面板是 40u×21u 设备像素 ⇒ 一个参考像素 = u 设备像素 = u·pxScale vp。
-    const segVp: number = u * this.pxScale;
-    SevenSeg.draw(ctx, this.seconds, this.v(timeX), this.v(timeY), segVp, u);
-    SevenSeg.draw(ctx, e.minesRemaining(), this.v(mineX), this.v(mineY), segVp, u);
+    const segVp: number = su * this.pxScale;
+    SevenSeg.draw(ctx, this.seconds, this.v(timeX), this.v(timeY), segVp, su);
+    SevenSeg.draw(ctx, e.minesRemaining(), this.v(mineX), this.v(mineY), segVp, su);
   }
 
   // ------------------------------------------------------------------ 交互
@@ -935,9 +1013,13 @@ export class GameController {
     } else if (this.atlas.gameStyle === GameStyle.Flowers) {
       // 花园模式判负：换成三段花朵音效（雷数 ≤10 Short / ≤40 Medium / 更多 Long）。
       // 注意是**替换**而不是叠加 —— 两个播放器各自独立起播，叠加会变成两种声音同时响。
-      const left: number = Math.abs(this.engine.minesRemaining());
-      const name: string = left <= 10 ? Sound.FLOWER_LOSE_SHORT
-        : (left <= 40 ? Sound.FLOWER_LOSE_MEDIUM : Sound.FLOWER_LOSE_LONG);
+      //
+      // 坑（Codex 复审 P2，2026-11-01）：分档必须用**本局总雷数**，不能用剩余雷数。
+      // 剩余雷数是「总雷数 − 已插旗数」，判负前玩家往往已经插了 30 面旗，
+      // 于是 40 雷的局会按 10 雷去播 Short、99 雷的局会按 40 雷去播 Medium —— 全错档。
+      const mines: number = this.engine.mineCount;
+      const name: string = mines <= 10 ? Sound.FLOWER_LOSE_SHORT
+        : (mines <= 40 ? Sound.FLOWER_LOSE_MEDIUM : Sound.FLOWER_LOSE_LONG);
       SoundPlayer.play(name);
     } else {
       SoundPlayer.play(Sound.GAME_LOSE);
@@ -975,9 +1057,11 @@ export class GameController {
     const e = this.engine;
     const cells: number[] = [];
     const times: number[] = [];
-    const barH = Anim.SCAN_BAR[3] * this.unit;
-    const boardBottom = this.boardY + e.rowCount * this.tile;
-    const boardH = Math.max(1, e.rowCount * this.tile);
+    // 条的高度必须与画的时候一致（Anim.scanBarRect 按原版保持长宽比算），
+    // 否则光束的起跳时刻和条实际扫到那一行的时刻对不上。
+    const barH = this.scanBarHeight();
+    const boardBottom = this.sweepBottom();
+    const boardH = Math.max(1, boardBottom - this.boardY);
     for (let r = 0; r < e.rowCount; r++) {
       for (let c = 0; c < e.colCount; c++) {
         if (!e.cellAt(r, c).mine) {
@@ -994,24 +1078,6 @@ export class GameController {
     Anim.startWin(cells, times);
     this.pendingGameOver = true;
     this.startAnimTimer();
-  }
-
-  /**
-   * 扫描条当前的位置（设备像素，返回条的上沿）；不在扫就返回 -1。
-   *
-   * 行程：p=0 时条的**下沿**贴棋盘下沿，p=1 时条的**下沿**离开棋盘上沿
-   *  —— 即条的上沿从 boardBottom - barH 走到 boardTop - barH，正好扫完全盘。
-   */
-  private scanBarY(): number {
-    if (!Anim.winActive) {
-      return -1;
-    }
-    const e = this.engine;
-    const boardBottom = this.boardY + e.rowCount * this.tile;
-    const boardH = e.rowCount * this.tile;
-    const barH = Anim.SCAN_BAR[3] * this.unit;
-    const p = Math.min(1, Anim.winElapsed / Anim.SWEEP_MS);
-    return boardBottom - barH - p * boardH;
   }
 
   /** 找出踩中的那颗雷的格索引（没有就 -1） */

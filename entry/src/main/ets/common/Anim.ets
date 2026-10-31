@@ -50,6 +50,15 @@ export class Anim {
   static tripActive: boolean = false;
   static tripFrame: number = 0;
   static tripCell: number = -1;
+  /**
+   * 爆炸动画已经播了多久（ms）。
+   *
+   * 以前是**按帧计数**推进的（每 tick 帧号 +1），而 tick 的间隔是 30ms，
+   * 于是 23 帧只用了 23×30 = 690ms —— 比原版的 1 秒短了三分之一。
+   * 原版 animationMineSweeper_MineTrip.xml 是 1 秒 / 23 帧，
+   * 所以这里改成**按时间**推进，EXPLODE_FRAME_MS 才是真正被用上的那个常量。
+   */
+  static tripElapsed: number = 0;
 
   /** 爆炸帧的源矩形（逻辑坐标） */
   static explodeRect(frame: number): number[] {
@@ -64,12 +73,14 @@ export class Anim {
   static startTrip(cellIndex: number): void {
     Anim.tripActive = true;
     Anim.tripFrame = 0;
+    Anim.tripElapsed = 0;
     Anim.tripCell = cellIndex;
   }
 
   static stopTrip(): void {
     Anim.tripActive = false;
     Anim.tripFrame = 0;
+    Anim.tripElapsed = 0;
     Anim.tripCell = -1;
   }
 
@@ -126,23 +137,50 @@ export class Anim {
   static tick(dtMs: number): boolean {
     let more = false;
     if (Anim.tripActive) {
-      Anim.tripFrame++;
-      if (Anim.tripFrame >= Anim.EXPLODE_FRAMES) {
+      // 爆炸按**时间**推进（原来按帧计数，实际只跑了 690ms）
+      Anim.tripElapsed += dtMs;
+      const total = Anim.EXPLODE_FRAME_MS * Anim.EXPLODE_FRAMES;
+      if (Anim.tripElapsed >= total) {
         Anim.tripActive = false;
+        Anim.tripFrame = 0;
+        Anim.tripElapsed = 0;
         Anim.tripCell = -1;
       } else {
+        Anim.tripFrame = Math.min(Anim.EXPLODE_FRAMES - 1,
+                                  Math.floor(Anim.tripElapsed / Anim.EXPLODE_FRAME_MS));
         more = true;
       }
     }
     if (Anim.winActive) {
       Anim.winElapsed += dtMs;
-      if (Anim.winElapsed < Anim.SWEEP_MS + Anim.DISARM_FRAME_MS * Anim.DISARM_FRAMES) {
+      if (Anim.winElapsed < Anim.winEndMs()) {
         more = true;
       } else {
         Anim.stopWin();
       }
     }
     return more;
+  }
+
+  /**
+   * 胜利动画什么时候结束（ms）。
+   *
+   * 原版：扫描条扫完（3 秒）之后，最后一束拆雷光束放完就结束
+   * （linux-minesweeper：m_winEnd = max(3000, lastBeamStart + 2000)）。
+   *
+   * 我们以前写死 3000 + 52.63×38 = 5000ms，可是光束是在扫描条**扫到那一行**
+   * 才开始放的 —— 雷在最后几行时，最后一束光束要到 3000ms 之后才开始，
+   * 5000ms 就会**把光束砍掉一半**。所以结束时刻必须按最后一束光束算。
+   */
+  static winEndMs(): number {
+    let end = Anim.SWEEP_MS;
+    for (let i = 0; i < Anim.beams.length; i++) {
+      const e = Anim.beams[i].startMs + Anim.DISARM_FRAME_MS * Anim.DISARM_FRAMES;
+      if (e > end) {
+        end = e;
+      }
+    }
+    return end;
   }
 
   /**
@@ -168,5 +206,50 @@ export class Anim {
   /** 全部动画都结束了 */
   static isIdle(): boolean {
     return !Anim.tripActive && !Anim.winActive;
+  }
+
+  // ------------------------------------------------------------ 扫描条几何
+
+  /**
+   * 胜利扫描条要画的矩形 —— **已经按棋盘矩形裁剪过**。
+   *
+   * 返回 [srcX, srcY, srcW, srcH, dy, dw, dh]，前四项是 otherSheet 上的源矩形，
+   * 后三项是画到画布上的目标矩形（dx 由调用方给，就是棋盘左沿）。
+   * 没在扫的时候返回 null。
+   *
+   * 为什么要裁：
+   *   原版（linux-minesweeper，BoardWidget::drawScanBar / Theme.h）是
+   *   `p.setClipRect(m_grid)` —— 扫描条被**裁在棋盘矩形内**，
+   *   扫到最上面时整条消失，看不到「条停在棋盘顶上」。
+   *   我们以前是把整条直接画出来，于是 p=1 时条停在棋盘上沿外面，不消失。
+   *
+   * 高度按原版保持长宽比：
+   *   barH = grid.width() * src.height() / src.width()
+   *   （直接用 62*unit 会被拉变形：9×9 的盘面 275:62 的比例对不上）
+   *
+   * 行程不变：p=0 时条的下沿贴棋盘下沿，p=1 时条整个离开棋盘上沿。
+   */
+  static scanBarRect(boardTop: number, boardBottom: number, boardW: number): number[] | null {
+    if (!Anim.winActive) {
+      return null;
+    }
+    const srcW = Anim.SCAN_BAR[2];
+    const srcH = Anim.SCAN_BAR[3];
+    const barH = Math.max(1, Math.round(boardW * srcH / srcW));
+    const boardH = boardBottom - boardTop;
+    const p = Math.min(1, Anim.winElapsed / Anim.SWEEP_MS);
+    const barY = boardBottom - barH - p * boardH;   // 自下而上
+    // 裁到棋盘矩形内
+    const top = Math.max(barY, boardTop);
+    const bottom = Math.min(barY + barH, boardBottom);
+    if (bottom <= top) {
+      return null;                                   // 整条在棋盘外（扫完了）
+    }
+    const visible = bottom - top;
+    // 可见段对应到源精灵上的哪一段
+    const scale = srcH / barH;
+    const sy = Anim.SCAN_BAR[1] + Math.round((top - barY) * scale);
+    const sh = Math.max(1, Math.min(srcH, Math.round(visible * scale)));
+    return [Anim.SCAN_BAR[0], sy, srcW, sh, top, boardW, visible];
   }
 }
