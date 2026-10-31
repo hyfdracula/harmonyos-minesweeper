@@ -152,13 +152,28 @@ export class GameController {
     this.startNewGame(cfg.rows, cfg.cols, cfg.mines);
   }
 
-  /** 同难度重开 */
+  /**
+   * 同盘面重开。
+   *
+   * 坑（2026-10-31，custom-agent 审计 P1）：原来这里用 `configOf(this.difficulty)`，
+   * 于是**自定义局的「新建(F2)」和「再玩一局(P)」会把 20×20×50 的盘面换成 9×9 初级盘**。
+   * 原版语义是「重新开始这个游戏」——用的是当前盘面的参数，不是难度预设。
+   * 现在直接取引擎当前的行列与雷数。
+   *
+   * `customGame` 标记**保留**：重开后的这一局仍然是自定义局，仍然不进统计
+   * （Win7 的规则就是自定义局不计入获胜率）。
+   */
   restart(): void {
-    const cfg = GameController.configOf(this.difficulty);
-    // 重开按当前难度走，自定义局的「不进统计」标记要清掉，
-    // 否则之后按难度开的局也会被当成自定义局而不记成绩。
-    this.customGame = false;
-    this.startNewGame(cfg.rows, cfg.cols, cfg.mines);
+    const rows = this.engine.rowCount;
+    const cols = this.engine.colCount;
+    const mines = this.engine.mineCount;
+    if (rows <= 0 || cols <= 0) {
+      const cfg = GameController.configOf(this.difficulty);
+      this.customGame = false;
+      this.startNewGame(cfg.rows, cfg.cols, cfg.mines);
+      return;
+    }
+    this.startNewGame(rows, cols, mines);
   }
 
   /**
@@ -1072,6 +1087,8 @@ export class GameController {
 
   /** 统计信息窗口是否打开 */
   statsOpen: boolean = false;
+  /** 统计窗口左栏难度列表当前选中项（0=初级 1=中级 2=高级） */
+  statsSelectedLevel: number = 0;
   private statsScale: number = 1;
   private statsOx: number = 0;
   private statsOy: number = 0;
@@ -1081,6 +1098,9 @@ export class GameController {
     this.statsOpen = true;
     this.dialog = null;
     this.menuOpenId = '';
+    // 左栏默认选中当前难度这一档（原版打开统计窗口时选中的是当前玩的那一档）
+    this.statsSelectedLevel = this.difficulty === Difficulty.Intermediate ? 1 :
+      (this.difficulty === Difficulty.Expert ? 2 : 0);
     this.draw();
   }
 
@@ -1099,25 +1119,21 @@ export class GameController {
     for (const level of ['初级', '中级', '高级']) {
       levels.push({ level: level, best: GameStats.bestSecondsOf(level), date: GameStats.bestDateOf(level) });
     }
-    // 中栏「最佳时间」显示三个难度里最快的那条（最贴近 information.jpg）
-    let best = -1;
-    let bestDate = '';
-    for (const level of ['初级', '中级', '高级']) {
-      const s = GameStats.bestSecondsOf(level);
-      if (s >= 0 && (best < 0 || s < best)) {
-        best = s;
-        bestDate = GameStats.bestDateOf(level);
-      }
-    }
+    // 中栏「最佳时间」显示**左栏当前选中那一档**的纪录。
+    // 原版这个列表是可以点的，选初级就显示初级的最好成绩（information.jpg 里
+    // 选中初级、中栏显示 17 秒那一条就是这个样子）。
+    const sel: number = Math.max(0, Math.min(2, this.statsSelectedLevel));
+    const picked: StatsLevel = levels[sel];
     return {
-      bestSeconds: best,
-      bestDate: bestDate,
+      bestSeconds: picked.best,
+      bestDate: picked.date,
       played: GameStats.played,
       won: GameStats.won,
       currentStreak: GameStats.currentStreak,
       maxStreak: GameStats.maxStreak,
       maxLoseStreak: GameStats.maxLoseStreak,
-      perLevel: levels
+      perLevel: levels,
+      selected: sel
     };
   }
 
@@ -1142,11 +1158,25 @@ export class GameController {
       return null;
     }
     this.statsLayout();
+    // 标题栏右上角的红叉（画了就得能点）
+    if (StatsWindowPainter.hitTitleClose(this.statsScale, this.statsOx, this.statsOy, px, py)) {
+      return 'close';
+    }
     if (StatsWindowPainter.hitReset(this.statsScale, this.statsOx, this.statsOy, px, py)) {
       return 'reset';
     }
     if (StatsWindowPainter.hitClose(this.statsScale, this.statsOx, this.statsOy, px, py)) {
       return 'close';
+    }
+    // 左栏难度列表：点哪一档就选中哪一档，中栏跟着换
+    const li: number = StatsWindowPainter.hitListItem(this.statsScale, this.statsOx, this.statsOy, px, py);
+    if (li >= 0 && li <= 2) {
+      if (this.statsSelectedLevel !== li) {
+        this.statsSelectedLevel = li;
+        console.info('[Stats] 选中难度 ' + li);
+        this.draw();
+      }
+      return null;
     }
     const w = StatsWindowPainter.width() * this.statsScale;
     const h = StatsWindowPainter.height() * this.statsScale;

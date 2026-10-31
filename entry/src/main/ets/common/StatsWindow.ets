@@ -56,6 +56,11 @@ export interface StatsData {
   maxLoseStreak: number;
   /** 各难度的最快纪录（供左栏列表显示） */
   perLevel: StatsLevel[];
+  /**
+   * 左栏列表当前选中的项下标（0=初级 / 1=中级 / 2=高级）。
+   * 原版这个列表是可以点的，选中哪一项，中栏「最佳时间」就显示那一档的纪录。
+   */
+  selected: number;
 }
 
 // ==========================================================================
@@ -150,6 +155,8 @@ const LIST_SEL_Y: number = 44;
 const LIST_SEL_H: number = 14;
 /** 条目文字墨迹 x=24..46 */
 const LIST_ITEM_X: number = 24;
+/** 列表条目文字的命中宽度（参考像素）：「初级/中级/高级」三个字放得下 */
+const LIST_ITEM_TEXT_W: number = 42;
 /** 条目墨迹顶：初级 46 / 中级 59 / 高级 72（间距 13） */
 const LIST_ITEM_Y0: number = 46;
 const LIST_ITEM_DY: number = 13;
@@ -223,6 +230,40 @@ export class StatsWindowPainter {
   }
 
   /**
+   * 标题栏右上角红叉按钮的矩形（参考像素）[x, y, w, h]。
+   * draw 与 hitTitleClose 共用，保证「画在哪儿就能点到哪儿」。
+   */
+  static titleCloseRect(): number[] {
+    return [StatsWindowPainter.width() - CLOSE_RIGHT - CLOSE_W, CLOSE_TOP, CLOSE_W, CLOSE_H];
+  }
+
+  /**
+   * 左栏难度列表第 index 行的矩形（参考像素）[x, y, w, h]。
+   * 命中区取文字行的位置，和 draw 画文字的位置共用同一组常量。
+   */
+  static listItemRect(index: number): number[] {
+    return [LIST_ITEM_X, LIST_ITEM_Y0 + LIST_ITEM_DY * index, LIST_ITEM_TEXT_W, LIST_ITEM_DY];
+  }
+
+  /**
+   * 点到左栏难度列表的哪一行？返回 0/1/2，没点到返回 -1。
+   *
+   * 原版这个列表是个真的列表框：选中哪一档，中栏「最佳时间」就显示哪一档的纪录。
+   * 之前它只画不点（docs-agent 静态审计发现），现在补上。
+   */
+  static hitListItem(sDev: number, ox: number, oy: number, px: number, py: number): number {
+    for (let i: number = 0; i < LIST_MAX_ITEMS; i++) {
+      const r: number[] = StatsWindowPainter.listItemRect(i);
+      const bx: number = ox + r[0] * sDev;
+      const by: number = oy + r[1] * sDev;
+      if (px >= bx && px <= bx + r[2] * sDev && py >= by && py <= by + r[3] * sDev) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /**
    * 画统计信息窗口。
    * @param sDev 参考像素 → 设备像素（用于字号、命中换算）
    * @param sVp  参考像素 → vp（用于几何）
@@ -287,10 +328,11 @@ export class StatsWindowPainter {
       oyVp + (TITLE_TEXT_Y + TEXT_INK_DY) * sVp);
 
     // ---- 右上角关闭按钮（红块 + 白叉）----
-    const cbX: number = oxVp + (StatsWindowPainter.width() - CLOSE_RIGHT - CLOSE_W) * sVp;
-    const cbY: number = oyVp + CLOSE_TOP * sVp;
-    const cbW: number = CLOSE_W * sVp;
-    const cbH: number = CLOSE_H * sVp;
+    const tr: number[] = StatsWindowPainter.titleCloseRect();
+    const cbX: number = oxVp + tr[0] * sVp;
+    const cbY: number = oyVp + tr[1] * sVp;
+    const cbW: number = tr[2] * sVp;
+    const cbH: number = tr[3] * sVp;
     const cg = ctx.createLinearGradient(cbX, cbY, cbX, cbY + cbH);
     cg.addColorStop(0, '#e3b0a8');
     cg.addColorStop(0.5, C_CLOSE_RED);
@@ -318,25 +360,26 @@ export class StatsWindowPainter {
     ctx.strokeStyle = C_LIST_BORDER;
     ctx.lineWidth = Math.max(1, sVp);
     ctx.strokeRect(lx, ly, lw, lh);
-    // 选中条（第 0 项；选中条 y=44..57，列表框上边框在 y=43）
+    // 选中条（第 selected 项；选中条 y=44..57，列表框上边框在 y=43）
+    const cnt: number = Math.min(data.perLevel.length, LIST_MAX_ITEMS);
+    const sel: number = Math.max(0, Math.min(cnt - 1, data.selected));
     const sg = ctx.createLinearGradient(lx, ly + (LIST_SEL_Y - LIST_Y) * sVp, lx,
       ly + (LIST_SEL_Y - LIST_Y + LIST_SEL_H) * sVp);
     sg.addColorStop(0, C_SEL_TOP);
     sg.addColorStop(1, C_SEL_BOTTOM);
     ctx.fillStyle = sg;
-    ctx.fillRect(lx + 1 * sVp, ly + (LIST_SEL_Y - LIST_Y) * sVp,
+    ctx.fillRect(lx + 1 * sVp, ly + (LIST_SEL_Y - LIST_Y + LIST_ITEM_DY * sel) * sVp,
       lw - 2 * sVp, LIST_SEL_H * sVp);
     // 条目文字
     ctx.font = `${BTN_FONT * sDev}px sans-serif`;
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
-    const cnt: number = Math.min(data.perLevel.length, LIST_MAX_ITEMS);
     for (let i: number = 0; i < cnt; i++) {
       const it: StatsLevel = data.perLevel[i];
       if (it.level.length === 0) {
         continue;
       }
-      ctx.fillStyle = i === 0 ? C_TEXT_ON_SEL : C_TEXT;
+      ctx.fillStyle = i === sel ? C_TEXT_ON_SEL : C_TEXT;
       ctx.fillText(it.level, oxVp + LIST_ITEM_X * sVp,
         oyVp + (LIST_ITEM_Y0 + LIST_ITEM_DY * i + TEXT_INK_DY) * sVp);
     }
@@ -452,6 +495,20 @@ export class StatsWindowPainter {
    */
   static hitClose(sDev: number, ox: number, oy: number, px: number, py: number): boolean {
     const r: number[] = StatsWindowPainter.closeButtonRect();
+    const bx: number = ox + r[0] * sDev;
+    const by: number = oy + r[1] * sDev;
+    return px >= bx && px <= bx + r[2] * sDev && py >= by && py <= by + r[3] * sDev;
+  }
+
+  /**
+   * 是否点在标题栏右上角的红叉上。
+   *
+   * 坑（2026-10-31，docs-agent 静态审计发现）：这个叉是**画出来的**，但一直没有
+   * 命中区——hitClose 测的是底部「关闭(C)」大按钮，红叉点它没反应。
+   * 现在把矩形抽成 titleCloseRect()，画与点共用同一组常量。
+   */
+  static hitTitleClose(sDev: number, ox: number, oy: number, px: number, py: number): boolean {
+    const r: number[] = StatsWindowPainter.titleCloseRect();
     const bx: number = ox + r[0] * sDev;
     const by: number = oy + r[1] * sDev;
     return px >= bx && px <= bx + r[2] * sDev && py >= by && py <= by + r[3] * sDev;

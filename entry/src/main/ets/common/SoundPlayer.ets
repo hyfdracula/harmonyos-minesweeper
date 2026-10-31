@@ -73,18 +73,57 @@ export class SoundPlayer {
     }
   }
 
-  private static async playAsync(ctx: common.UIAbilityContext, name: string): Promise<void> {
-    let player = SoundPlayer.players.get(name);
-    if (player === undefined) {
-      const fdObj = await ctx.resourceManager.getRawFd(name + '.wav');
-      const p = await media.createAVPlayer();
-      p.fdSrc = { fd: fdObj.fd, offset: fdObj.offset, length: fdObj.length };
-      await p.prepare();
-      SoundPlayer.players.set(name, p);
-      player = p;
+  /**
+   * 拿到（必要时创建）某个音效的播放器。
+   *
+   * 坑（2026-10-31 真机）：`p.fdSrc = ...` 是**异步状态机**——赋值只是发起一次
+   * idle → initialized 的切换，立刻 `await p.prepare()` 会抢在状态切换之前，
+   * 抛 `The current state is idle. Prepare operation only supports stopped/initialized`，
+   * 结果**所有音效都不响**。官方示例是在 `stateChange` 回调里收到 `initialized`
+   * 之后再 `prepare()`，这里照做：注册监听 → 赋 fdSrc → 等 initialized → prepare。
+   */
+  private static async ensurePlayer(ctx: common.UIAbilityContext,
+    name: string): Promise<media.AVPlayer> {
+    const existing = SoundPlayer.players.get(name);
+    if (existing !== undefined) {
+      return existing;
     }
-    // 坑（Codex 复审 P1）：stop() 之后播放器停在 stopped 状态，
-    // seek(0) 不会把它变回 prepared，直接 play() 会失败（音效只能响一次）。
+    const fdObj = await ctx.resourceManager.getRawFd(name + '.wav');
+    const p = await media.createAVPlayer();
+    const inited: Promise<void> = new Promise<void>((resolve: () => void,
+      reject: (e: Error) => void) => {
+      let done: boolean = false;
+      const timer: number = setTimeout(() => {
+        if (!done) {
+          done = true;
+          reject(new Error('等待 initialized 超时'));
+        }
+      }, 3000);
+      p.on('stateChange', (state: string) => {
+        if (done) {
+          return;
+        }
+        if (state === 'initialized' || state === 'prepared' || state === 'playing') {
+          done = true;
+          clearTimeout(timer);
+          resolve();
+        } else if (state === 'error') {
+          done = true;
+          clearTimeout(timer);
+          reject(new Error('AVPlayer 进入 error 状态'));
+        }
+      });
+    });
+    p.fdSrc = { fd: fdObj.fd, offset: fdObj.offset, length: fdObj.length };
+    await inited;
+    await p.prepare();
+    SoundPlayer.players.set(name, p);
+    return p;
+  }
+
+  private static async playAsync(ctx: common.UIAbilityContext, name: string): Promise<void> {
+    const player = await SoundPlayer.ensurePlayer(ctx, name);
+    // 重播：stop() 之后播放器停在 stopped，seek(0) 不会把它变回 prepared，
     // 所以要 stop → prepare → seek(0) → play。
     try {
       await player.stop();
@@ -94,7 +133,7 @@ export class SoundPlayer {
     try {
       await player.prepare();
     } catch (err) {
-      // 忽略
+      // 已经在 prepared 时 prepare 可能抛错，忽略
     }
     try {
       await player.seek(0);

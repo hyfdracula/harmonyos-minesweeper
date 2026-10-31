@@ -517,7 +517,17 @@ export class CustomField {
       return MAX_COLS;
     }
     if (index === 2) {
-      return CustomField.maxMines(s.height, s.width);
+      // 雷数框的**输入**上限是全局 668，不按盘面尺寸收。
+      // 依据：两份独立参考都是这么写的——
+      //   Lmy0217 `Minesweeper.cpp` 的自定义面板：10–668 雷
+      //   linux-minesweeper `OptionsDialog.cpp:88`：`m_mines->setRange(10, 668)`
+      // 面板标签也照抄这个范围（「Mines (10-668)」）。
+      //
+      // 坑（2026-10-31，custom-agent 审计发现）：原来这里用的是按尺寸算的上限
+      // （9×9 只有 65），跟 SPEC §8-2 的决定和参考实现都不一致。
+      // 按盘面收的是**最终雷数**，在 clampSpec（确定时）和引擎 reset() 里夹，
+      // 用户看到的数字和实际布雷数始终一致。
+      return MAX_MINES;
     }
     return 0;
   }

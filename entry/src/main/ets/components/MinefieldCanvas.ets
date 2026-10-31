@@ -155,6 +155,17 @@ export struct MinefieldCanvas {
    */
   private handleTouch(event: TouchEvent): void {
     if (this.controller.inputLocked) {
+      // 有对话框 / 统计窗口 / 自定义框开着时：**只让点击通过**，不做平移与捏合。
+      // 注意不能在这里直接 return —— 那样连按钮都点不动了
+      // （2026-10-31 真机踩到：结束对话框的按钮完全没反应）。
+      if (event.type === TouchType.Down) {
+        this.moved = false;
+        this.longPressFired = false;
+      } else if (event.type === TouchType.Up && !this.moved &&
+        event.changedTouches.length > 0) {
+        const t0 = event.changedTouches[0];
+        this.handleTap(t0.x * this.density, t0.y * this.density);
+      }
       return;
     }
     const touches = event.touches;
