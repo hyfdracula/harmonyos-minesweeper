@@ -286,6 +286,10 @@ export class GameController {
     // 会把 Pura X Max 典藏版内屏（2584×1824）的 24×30 自定义局卡在 n=1：
     // 格边 36 px = 13.09 vp，点不准；抬到 n=2（格边 72 px = 26 vp）会纵向超出 90 px。
     // 现在**一律抬到格边 ≥ 48 的那一档**，纵向溢出交给顶对齐 + HUD 处理。
+    //
+    // v4.0 规则（一句话）：「整块装得下」优先；但整块装得下的那一档格边 < 48 设备像素，
+    // 就用更大的档位，**允许纵向溢出**（用户原话：小到点不准比溢出更糟）。
+    // 数字与推导见 docs\LAYOUT-MATRIX.md §4.3（规格仓），断言见 tools\check_layout.py。
     if (TILE * 2 * fit < MIN_CELL_PX && fit < MAX_SCALE_INDEX) {
       // 最小可点档：格边 ≥ MIN_CELL_PX 的最小 n（48 / 36 = 1.33 → 2）
       const minTouchN: number = Math.ceil(MIN_CELL_PX / (TILE * 2));
@@ -374,6 +378,10 @@ export class GameController {
     // 纵向是**单向**的：只能往上推（panY ≤ 0），推到棋盘下沿与 HUD 上沿齐平为止。
     // 对称范围（±溢出量/2）会让最后一行永远缺一截——棋盘只比可视区高 90 px 时，
     // 居中那个位置上下各露 45 px，最后一行被 HUD 吃掉 45 px，点不准。
+    //
+    // 这条就是 Codex 对抗性复审的 **P1**（「向上平移的上限只允许溢出量的一半 →
+    // 底部格子平移到头仍被状态条压住，点不到」）：上限改成**整个溢出量**。
+    // 处理记录见 docs\LAYOUT-MATRIX.md §4.3.4。
     const boardH: number = e.rowCount * this.tile;
     const overV: number = boardH > this.boardAreaH ? boardH - this.boardAreaH : 0;
     this.panX = Math.max(-limX, Math.min(limX, this.panX));
@@ -798,7 +806,10 @@ export class GameController {
   /** 设备像素坐标 → 格子索引，-1 表示不在棋盘上 */
   hitTest(px: number, py: number): number {
     const e = this.engine;
-    // 状态条钉在画布底边（HUD）时，它盖住棋盘的下沿；点到 HUD 上不算点棋盘
+    // 状态条钉在画布底边（HUD）时，它盖住棋盘的下沿；点到 HUD 上不算点棋盘。
+    // 这是 Codex 对抗性复审的 **P2**（「状态条钉底时 hitTest 仍把落在状态条区域的点击
+    // 映射到被压住的格子——点一下计数器就可能翻开一个看不见的格子，甚至踩到雷」）。
+    // 处理记录见 docs\LAYOUT-MATRIX.md §4.3.4。
     if (this.hudActive && py >= this.stripTop) {
       return -1;
     }
