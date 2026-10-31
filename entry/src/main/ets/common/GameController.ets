@@ -1134,6 +1134,8 @@ export class GameController {
 
   /**
    * 点到统计窗口的按钮：返回 'reset' / 'close' / null。
+   *
+   * 点窗口**外面**也算关闭（返回 'close'），避免手机上误入后找不到出口。
    */
   statsButtonAt(px: number, py: number): string | null {
     if (!this.statsOpen) {
@@ -1144,6 +1146,13 @@ export class GameController {
       return 'reset';
     }
     if (StatsWindowPainter.hitClose(this.statsScale, this.statsOx, this.statsOy, px, py)) {
+      return 'close';
+    }
+    const w = StatsWindowPainter.width() * this.statsScale;
+    const h = StatsWindowPainter.height() * this.statsScale;
+    const outside = px < this.statsOx || px > this.statsOx + w ||
+      py < this.statsOy || py > this.statsOy + h;
+    if (outside) {
       return 'close';
     }
     return null;
