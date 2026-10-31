@@ -24,7 +24,7 @@ import { Ripple, RippleStep } from './Ripple';
 import { StatsWindowPainter, StatsData, StatsLevel } from './StatsWindow';
 import { DealIn } from './DealIn';
 import {
-  TILE, MAX_SCALE_INDEX, FRAME_GAP_L, FRAME_GAP_T, FRAME_GAP_R, FRAME_GAP_B,
+  TILE, MAX_SCALE_INDEX, MIN_CELL_PX, FRAME_GAP_L, FRAME_GAP_T, FRAME_GAP_R, FRAME_GAP_B,
   gradientFrame, normalTileRect, pressedTileRect, RECT_FLAG, RECT_QUESTION, RECT_HILITE, RECT_MISFLAG,
   RECT_SHADOW_U, RECT_SHADOW_L, RECT_COUNTER, digitRect, RECT_MINE, RECT_PANEL_MINE, RECT_CLOCK,
   COLOR_OUTSIDE, COLOR_FLOOR, COLOR_SUNKEN,
@@ -222,9 +222,15 @@ export class GameController {
     this.draw();
   }
 
-  /** 设备像素 → Canvas 坐标（vp） */
+  /**
+   * 设备像素 → Canvas 坐标（vp）
+   *
+   * 坑（2026-10-31，LAYOUT-MATRIX 审计 P2-6）：这里原来直接 `px * pxScale`，
+   * 于是**落在分数设备像素上**的矩形与文字会被抗锯齿糊掉（对话框的缩放是小数，
+   * 按钮、文字全在半像素上）。像素级复刻要求边缘锐利，所以先取整再换算。
+   */
   private v(px: number): number {
-    return px * this.pxScale;
+    return Math.round(px) * this.pxScale;
   }
 
   /** 按当前画布尺寸重算缩放档位与各矩形 */
@@ -234,16 +240,35 @@ export class GameController {
       return;
     }
     // 1) 算出「整盘刚好放下」的档位
+    //
+    // 坑（2026-10-31，LAYOUT-MATRIX 审计 P1-2/P1-3）：原来算的是「原版窗口底板
+    // frame」的尺寸，也就是棋盘 + 四周 59×62 单位的玻璃边框留白。**手机版不画那个边框**
+    // （drawBoardArea 只在棋盘矩形内填白地板），这 59/62 单位纯属白占缩放预算，
+    // 把高级局在窄屏上压到 n=1（格边 10~13 vp，手指根本点不准）。
+    // 现在只按**真正画出来的东西**算预算：
+    //   横向 = 棋盘宽
+    //   纵向 = 菜单栏 + 棋盘高 + 状态条带（状态条就住在棋盘正下方 32u 的带子里）
+    const menuPx: number = this.menuBarPx();
     let fit = 1;
     for (let n = 1; n <= MAX_SCALE_INDEX; n++) {
       const u = 2 * n;
-      const fw = e.colCount * TILE * u + (FRAME_GAP_L + FRAME_GAP_R) * u;
-      const fh = e.rowCount * TILE * u + (FRAME_GAP_T + FRAME_GAP_B) * u;
-      if (fw <= this.canvasW && fh <= this.canvasH) {
+      const bw = e.colCount * TILE * u;
+      const bh = e.rowCount * TILE * u + STRIP_BAND * u;
+      if (bw <= this.canvasW && menuPx + bh <= this.canvasH) {
         fit = n;
       } else {
         break;
       }
+    }
+    // 装得下的那一档如果格子小到点不准，就往上抬**一档**，让棋盘横向超出画布，
+    // 靠平移看（`clampPan` 本来就支持）。
+    //
+    // 为什么：30 列的局在窄屏（外屏 1323 px / Mate 90 Pro 1280 px）上宽度是几何必然，
+    // 装得下的那一档只有 n=1（格边 36 px ≈ 10~13 vp），手指根本点不准。
+    // 用户的原话是「外屏不接受降级，我希望可以拖动放大」——宁可超宽也要能点准。
+    // 抬一档后格边 72 px（≈20~26 vp），用单指平移就能看全。
+    if (TILE * 2 * fit < MIN_CELL_PX && fit < MAX_SCALE_INDEX) {
+      fit = fit + 1;
     }
     this.fitScaleIndex = fit;
     // 2) 用户没手动缩放过就用适配档；缩放过就保留用户的档位（折叠换屏时不丢视角）
@@ -260,7 +285,15 @@ export class GameController {
       ' unit=' + this.unit + ' 格边=' + this.tile + 'px 棋盘原点=(' + this.boardX + ',' + this.boardY + ')');
   }
 
-  /** 根据当前档位与平移量重算各矩形（设备像素） */
+  /**
+   * 根据当前档位与平移量重算各矩形（设备像素）
+   *
+   * 坑（2026-10-31，LAYOUT-MATRIX 审计 P1-2/P1-3）：原来 frame 是「棋盘 + 不可见的
+   * 玻璃边框留白」，整块在画布上居中，于是留白白占地方、菜单栏也没进预算。
+   * 现在 frame 就是**画出来的内容**（棋盘 + 状态条带）：
+   *   - 横向：棋盘在画布里居中
+   *   - 纵向：从菜单栏下沿往下，把「棋盘 + 状态条」这一组在剩余空间里居中
+   */
   private applyGeometry(): void {
     const e = this.engine;
     const u = 2 * this.scaleIndex;
@@ -268,12 +301,18 @@ export class GameController {
     this.tile = TILE * u;
     const boardW = e.colCount * this.tile;
     const boardH = e.rowCount * this.tile;
-    this.frameW = boardW + (FRAME_GAP_L + FRAME_GAP_R) * u;
-    this.frameH = boardH + (FRAME_GAP_T + FRAME_GAP_B) * u;
+    this.frameW = boardW;
+    this.frameH = boardH + STRIP_BAND * u;
     this.frameX = Math.round((this.canvasW - this.frameW) / 2) + this.panX;
-    this.frameY = Math.round((this.canvasH - this.frameH) / 2) + this.panY;
-    this.boardX = this.frameX + FRAME_GAP_L * u;
-    this.boardY = this.frameY + FRAME_GAP_T * u;
+    this.frameY = this.menuBarPx() +
+      Math.round((this.canvasH - this.menuBarPx() - this.frameH) / 2) + this.panY;
+    this.boardX = this.frameX;
+    this.boardY = this.frameY;
+  }
+
+  /** 菜单栏高度（设备像素） */
+  private menuBarPx(): number {
+    return Math.round(MENU_BAR_H / this.pxScale);
   }
 
   /**
@@ -284,10 +323,12 @@ export class GameController {
    * 板子比视口大时允许拖动，且两边都能拖到。
    */
   private clampPan(): void {
-    const baseX = (this.canvasW - this.frameW) / 2;
-    const baseY = (this.canvasH - this.frameH) / 2;
-    const limX = Math.abs(baseX);
-    const limY = Math.abs(baseY);
+    const availH: number = Math.max(1, this.canvasH - this.menuBarPx());
+    // 坑（2026-10-31）：原来 limX/limY 用 |(画布-底板)/2|，**放得下的时候也允许拖**，
+    // 于是初级局能把棋盘拖到偏出屏幕。现在改成：放得下就不许拖，放不下才给
+    // (内容-可视)/2 的余量，保证两边都能拖到。
+    const limX: number = this.frameW > this.canvasW ? (this.frameW - this.canvasW) / 2 : 0;
+    const limY: number = this.frameH > availH ? (this.frameH - availH) / 2 : 0;
     this.panX = Math.max(-limX, Math.min(limX, this.panX));
     this.panY = Math.max(-limY, Math.min(limY, this.panY));
   }
@@ -1036,13 +1077,42 @@ export class GameController {
   }
 
   /** 对话框当前的绘制参数（缩放与位置） */
+  /**
+   * 对话框/统计窗口的缩放倍数（参考像素 → 设备像素）。
+   *
+   * 坑（2026-10-31，LAYOUT-MATRIX 审计 P2-7）：这个值原来只在 dialogLayout() 里算，
+   * 而 dialogLayout() 只被 drawDialog() 调用；draw() 的顺序是 drawCustom() 在
+   * drawDialog() 之前，打开自定义框时 this.dialog 为 null → dialogLayout() 直接 return
+   * → 自定义框拿到的是**陈旧的** dialogScale（首次为初值 1）。
+   * 结果自定义框在任何画布上都固定 402 px 宽，比同屏的结束对话框小 2 倍。
+   * 现在抽成独立方法，drawCustom()/customLayout() 自己调一次。
+   *
+   * 坑（2026-10-31，X7 点击矩阵 A1）：原来的公式 `canvasW/1400` 隐含假设画布宽约
+   * 1400 px。Mate X7 内屏 2210 px 只得到 1.58 倍，自定义框正文每汉字只有 ~2.7 vp，
+   * 数字键盘每键 ~10 vp——手指根本点不准。
+   * 改成按**物理密度**算（Win7 的对话框是 96 dpi 下的固定物理尺寸，手机上应当等比放大），
+   * 再保证窗口放得下（左右各留 32 px），最后封顶 2 倍避免在超宽屏上过大。
+   *
+   * 坑（2026-10-31，Codex 复审 P2）：**只按宽度封顶不够**。
+   * 短画布（横屏、分屏）上，按宽度算出来的倍数会让对话框**高度超出屏幕**，
+   * 底部按钮跑到屏幕外点不到（实测例：900×400 画布 @密度 2.75，
+   * 396×340 的胜利框 ×2 = 792×680，按钮全在屏外）。
+   * 所以高度也必须参与封顶。
+   */
+  private computeDialogScale(refWidth: number, refHeight: number): number {
+    const density = 1 / this.pxScale;
+    const maxByWidth = Math.max(1, (this.canvasW - 32) / refWidth);
+    const maxByHeight = Math.max(1, (this.canvasH - 32) / refHeight);
+    return Math.max(1, Math.min(2, density, maxByWidth, maxByHeight));
+  }
+
   private dialogLayout(): void {
     const d = this.dialog;
     if (d === null) {
       return;
     }
-    // 参考像素 → 设备像素：按画布宽度取一个整数感舒服的倍数
-    const s = Math.max(1, Math.min(2, this.canvasW / 1400));
+    // 参考像素 → 设备像素
+    const s = this.computeDialogScale(d.width, d.height);
     this.dialogScale = s;
     this.dialogOx = Math.round((this.canvasW - d.width * s) / 2);
     this.dialogOy = Math.round((this.canvasH - d.height * s) / 2);
@@ -1106,8 +1176,8 @@ export class GameController {
 
   /** 统计窗口当前的绘制参数 */
   private statsLayout(): void {
-    // 参考像素 → 设备像素：按画布宽度取一个整数感舒服的倍数
-    const s = Math.max(1, Math.min(2, this.canvasW / 1500));
+    // 参考像素 → 设备像素：与对话框同一套缩放规则（按物理密度算 + 保证放得下）
+    const s = this.computeDialogScale(StatsWindowPainter.width(), StatsWindowPainter.height());
     this.statsScale = s;
     this.statsOx = Math.round((this.canvasW - StatsWindowPainter.width() * s) / 2);
     this.statsOy = Math.round((this.canvasH - StatsWindowPainter.height() * s) / 2);
@@ -1207,6 +1277,9 @@ export class GameController {
 
   /** 自定义对话框 + 数字键盘的摆放位置（设备像素） */
   private customLayout(): void {
+    // 自己算缩放，别用 dialogLayout() 的陈旧值（见 computeDialogScale 的坑）
+    this.dialogScale = this.computeDialogScale(DLG_W + 12 + NumKeypad.width(),
+      Math.max(DLG_H, NumKeypad.height()));
     const s = this.dialogScale;
     const dlgW = DLG_W * s;
     const keyW = NumKeypad.width() * s;
@@ -1406,6 +1479,20 @@ export class GameController {
   }
 
   /**
+   * 打开「游戏」下拉菜单。
+   *
+   * 结束对话框中间那个按钮的文案是「换个难度(D)」——名字说了要换难度，
+   * 原来点了只是把框关掉（custom-agent 审计指出「名不副实」）。
+   * 现在它真的把难度菜单打开，用户接着点初级/中级/高级即可。
+   */
+  openGameMenu(): void {
+    this.dialog = null;
+    this.buildMenu();
+    this.menuOpenId = 'game';
+    this.draw();
+  }
+
+  /**
    * 菜单栏命中测试：返回动作标识。
    * @param px 设备像素 x
    * @param py 设备像素 y
@@ -1421,6 +1508,12 @@ export class GameController {
         const x = WinMenuPainter.dropX(this.menuSpec, this.menuOpenId, fontPx, density, 0);
         const id = WinMenuPainter.entryHit(top.entries, x, MENU_BAR_H, pxVp, pyVp);
         if (id.length > 0) {
+          // 坑（2026-10-31，CLICK-MATRIX-90P 异常 1）：选中条目后**没有关掉下拉菜单**。
+          // 换难度类动作会走 startNewGame()，里面把 menuOpenId 清了，所以看着正常；
+          // 但「标记(?)」「声音」走的是 refreshMenu()，不清 menuOpenId，
+          // 结果整块菜单留在画布上不消失（动作其实已经执行了）。
+          // 这里统一先关菜单，后面的动作怎么处理都不影响。
+          this.menuOpenId = '';
           return id;
         }
         // 点在下拉面板以外 → 关闭菜单

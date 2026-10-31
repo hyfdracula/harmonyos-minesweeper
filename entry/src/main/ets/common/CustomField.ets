@@ -386,9 +386,12 @@ export class CustomField {
     ctx.font = `${HINT_SIZE * sDev}px sans-serif`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
+    // 提示行：输入范围照抄原版（10-668），但把**本盘面的实际上限**也说清楚——
+    // 确定时按盘面夹取（见 clampSpec），不说清楚用户会以为填 668 就有 668 颗雷。
     ctx.fillText('高度 ' + MIN_ROWS.toString() + '-' + MAX_ROWS.toString() +
       '，宽度 ' + MIN_COLS.toString() + '-' + MAX_COLS.toString() +
-      '，最大雷数 ' + CustomField.maxMines(s.height, s.width).toString(),
+      '，雷数 ' + MIN_MINES.toString() + '-' + MAX_MINES.toString() +
+      '（本盘面最多 ' + CustomField.maxMines(s.height, s.width).toString() + '）',
       oxVp + HINT_X * sVp, oyVp + HINT_Y * sVp);
 
     // 底部两个按钮

@@ -36,8 +36,10 @@ struct Index {
       if (action === 'again') {
         this.newGame();
       } else if (action === 'menu') {
+        // 「换个难度(D)」：把「游戏」菜单打开让用户选难度（原来只是关框，名不副实）
         this.controller.closeDialog();
         this.gameOver = false;
+        this.controller.openGameMenu();
       } else if (action === 'exit') {
         this.controller.closeDialog();
         this.gameOver = false;

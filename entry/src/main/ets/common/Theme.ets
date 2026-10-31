@@ -124,6 +124,15 @@ export const COLOR_SUNKEN: string = '#4c556f';
 /** 状态条离棋盘下沿的高度（原版是窗口下边框，32 单位高） */
 export const STRIP_BAND: number = 32;
 
+/**
+ * 最小可点格边（设备像素）。
+ *
+ * 48 px 是经典的最小点按目标尺寸。窄屏上 30 列的局装得下时只有 36 px（≈10~13 vp），
+ * 手指根本点不准；这时宁可让棋盘横向超宽（可单指平移），也不要给一个点不中的棋盘。
+ * 用户的要求原话是「外屏不接受降级，我希望可以拖动放大」。
+ */
+export const MIN_CELL_PX: number = 48;
+
 /** 时钟图标 25×25 */
 export const STRIP_CLOCK_SIZE: number = 25;
 /** 计数面板 40×21（实测原版 40×22，取素材里的 40×21） */
