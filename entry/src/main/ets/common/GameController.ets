@@ -307,7 +307,8 @@ export class GameController {
     this.applyGeometry();
     console.info('[GameController] 布局 画布=' + this.canvasW + 'x' + this.canvasH + 'px 密度换算=' +
       this.pxScale.toFixed(4) + ' 适配档n=' + fit + ' 当前档n=' + this.scaleIndex +
-      ' unit=' + this.unit + ' 格边=' + this.tile + 'px 棋盘原点=(' + this.boardX + ',' + this.boardY + ')');
+      ' unit=' + this.unit + ' 格边=' + this.tile + 'px 棋盘原点=(' + this.boardX + ',' + this.boardY +
+      ') HUD=' + (this.hudActive ? 1 : 0) + ' 状态条上沿=' + this.stripTop + 'px');
   }
 
   /**
