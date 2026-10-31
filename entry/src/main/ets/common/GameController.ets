@@ -20,6 +20,7 @@ import { WinMenuPainter, MenuSpec, MENU_BAR_H } from './WinMenu';
 import { CustomField, CustomSpec, DLG_W, DLG_H } from './CustomField';
 import { NumKeypad } from './NumKeypad';
 import { Anim } from './Anim';
+import { Ripple, RippleStep } from './Ripple';
 import {
   TILE, MAX_SCALE_INDEX, FRAME_GAP_L, FRAME_GAP_T, FRAME_GAP_R, FRAME_GAP_B,
   gradientFrame, normalTileRect, pressedTileRect, RECT_FLAG, RECT_QUESTION, RECT_HILITE, RECT_MISFLAG,
@@ -144,6 +145,9 @@ export class GameController {
   /** 同难度重开 */
   restart(): void {
     const cfg = GameController.configOf(this.difficulty);
+    // 重开按当前难度走，自定义局的「不进统计」标记要清掉，
+    // 否则之后按难度开的局也会被当成自定义局而不记成绩。
+    this.customGame = false;
     this.startNewGame(cfg.rows, cfg.cols, cfg.mines);
   }
 
@@ -158,7 +162,13 @@ export class GameController {
     this.seconds = 0;
     this.stopTimer();
     this.stopAnimTimer();
+    // 换局要把上一局的动画状态全清掉：踩雷爆炸与胜利扫描条都要停，
+    // 否则扫描条会盖在新棋盘上（Codex 复审 P2）。
     Anim.stopTrip();
+    Anim.stopWin();
+    this.stopRipple();
+    // 还没播完的爆炸音也要撤（Codex 复审 P2：上一局的爆炸声会串到新局）
+    this.stopBombTail();
     this.gameOverNotified = false;
     this.dialog = null;
     this.menuOpenId = '';
@@ -391,6 +401,13 @@ export class GameController {
         if (cell.revealed) {
           // 地板 = 该格的「按下态」渐变砖块（浅灰），再叠上凸起格子投下来的黑边
           const frame = gradientFrame(r, c, e.rowCount, e.colCount);
+          // 洪泛涟漪：展开中的格子还盖着未揭开的凸起砖，地板/数字按 alpha 淡入
+          // （原版的 animationAlphaQuickFadeOut，见 Ripple.ets 的依据说明）
+          const alpha = this.rippleAlphaOf(idx);
+          if (alpha < 1) {
+            this.atlas.drawLogical(ctx, this.atlas.boardSheet, normalTileRect(frame), x, y, u);
+            ctx.globalAlpha = alpha;
+          }
           this.atlas.drawLogical(ctx, this.atlas.boardSheet, pressedTileRect(frame), x, y, u);
 
           // 阴影：上方（或首行）和左方（或首列）有凸起格子时，画黑边
@@ -431,6 +448,9 @@ export class GameController {
             // 数字框 12×15，在 18×18 的格子里居中（原版实测：数字居于格子中部）
             this.atlas.drawLogical(ctx, this.atlas.boardSheet, digitRect(cell.adjacent),
               x + 3 * u, y + 1.5 * u, u);
+          }
+          if (alpha < 1) {
+            ctx.globalAlpha = 1;
           }
         } else {
           const frame = gradientFrame(r, c, e.rowCount, e.colCount);
@@ -489,6 +509,59 @@ export class GameController {
     const barH = Math.round(62 * u);
     this.atlas.draw(ctx, this.atlas.otherSheet, Anim.SCAN_BAR,
       this.boardX, barY, boardW, barH);
+  }
+
+  // ------------------------------------------------------------ 洪泛涟漪
+
+  /**
+   * 洪泛涟漪（原版的 animationAlphaQuickFadeOut）。
+   *
+   * 原版：展开的格子按**切比雪夫方环**分层，每圈间隔 30ms，单格 150ms 线性淡入；
+   * 展开格数少于 6 时不涟漪，直接出现。依据见 Ripple.ets 里的注释。
+   */
+  private rippleSteps: RippleStep[] = [];
+  private rippleStart: number = 0;
+  private rippleTimer: number = -1;
+
+  /** 开始一次涟漪（展开格数不足时自动跳过） */
+  private startRipple(startCell: number, opened: number[]): void {
+    this.stopRipple();
+    const steps = Ripple.stepsFrom(startCell, opened, this.engine.rowCount, this.engine.colCount);
+    if (steps.length === 0) {
+      return;
+    }
+    this.rippleSteps = steps;
+    this.rippleStart = Date.now();
+    this.rippleTimer = setInterval(() => {
+      if (Date.now() - this.rippleStart >= Ripple.totalMsOf(steps)) {
+        this.stopRipple();
+        this.draw();
+        return;
+      }
+      this.draw();
+    }, 30);
+  }
+
+  private stopRipple(): void {
+    if (this.rippleTimer !== -1) {
+      clearInterval(this.rippleTimer);
+      this.rippleTimer = -1;
+    }
+    this.rippleSteps = [];
+  }
+
+  /** 某格当前的淡入不透明度（1 = 完全显示） */
+  private rippleAlphaOf(cellIndex: number): number {
+    if (this.rippleSteps.length === 0) {
+      return 1;
+    }
+    const elapsed = Date.now() - this.rippleStart;
+    for (const step of this.rippleSteps) {
+      if (step.cell === cellIndex) {
+        return Ripple.alphaAt(elapsed, step.atMs);
+      }
+    }
+    return 1;
   }
 
   /**
@@ -588,6 +661,10 @@ export class GameController {
     }
     if (wasReady && e.gameState === GameState.Playing) {
       this.startTimer();
+    }
+    // 洪泛涟漪：展开格数够多才涟漪（原版少于 6 格直接出现）
+    if (!outcome.lost && outcome.opened.length >= Ripple.MIN_CELLS) {
+      this.startRipple(r * e.colCount + c, outcome.opened);
     }
     this.syncTimerWithState();
     this.notifyGameOver();
@@ -743,12 +820,30 @@ export class GameController {
    * 各 wav 实测时长：mineBombStart 1.294s / mineBombRun 3.949s / mineBombEnd 1.951s。
    */
   private playBombTail(): void {
-    setTimeout(() => {
+    this.bombTimer1 = setTimeout(() => {
+      this.bombTimer1 = -1;
       SoundPlayer.play(Sound.BOMB_RUN);
-      setTimeout(() => {
+      this.bombTimer2 = setTimeout(() => {
+        this.bombTimer2 = -1;
         SoundPlayer.play(Sound.BOMB_END);
       }, 3949);
     }, 575);
+  }
+
+  /** 爆炸音延时的两个定时器（换局时必须撤掉，否则上一局的爆炸声会串到新局） */
+  private bombTimer1: number = -1;
+  private bombTimer2: number = -1;
+
+  /** 撤掉还没播完的爆炸音 */
+  private stopBombTail(): void {
+    if (this.bombTimer1 !== -1) {
+      clearTimeout(this.bombTimer1);
+      this.bombTimer1 = -1;
+    }
+    if (this.bombTimer2 !== -1) {
+      clearTimeout(this.bombTimer2);
+      this.bombTimer2 = -1;
+    }
   }
 
   /** 动画定时器（爆炸/胜利动画用，比计时器快得多） */
@@ -766,16 +861,20 @@ export class GameController {
       const dt = now - this.animLast;
       this.animLast = now;
       const more = Anim.tick(dt);
-      this.draw();
       if (!more) {
         this.stopAnimTimer();
-        // 动画放完，弹结束对话框
+        // 动画放完，弹结束对话框。
+        // 顺序很重要：**先建对话框再重画**，否则对话框建好了却没画出来
+        // （Codex 复审 P1：胜利扫描条结束后对话框一直不出现）。
         const won = this.engine.gameState === GameState.Won;
         this.buildDialog(won);
+        this.draw();
         const cb = this.onGameOver;
         if (cb !== null) {
           cb(won);
         }
+      } else {
+        this.draw();
       }
     }, 30);
   }
@@ -1155,12 +1254,19 @@ export class GameController {
     if (this.engine.gameState === GameState.Playing) {
       this.startTimer();
     }
+    // 胜利扫描条被切后台打断时，要接着放完，否则胜利对话框永远不弹
+    if (Anim.winActive || Anim.tripActive) {
+      this.startAnimTimer();
+    }
   }
 
   /** 页面重建（折叠/旋转）后恢复：接着原局继续，计时器重新走 */
   resume(): void {
     if (this.engine.gameState === GameState.Playing) {
       this.startTimer();
+    }
+    if (Anim.winActive || Anim.tripActive) {
+      this.startAnimTimer();
     }
     if (this.context !== null) {
       this.layout();

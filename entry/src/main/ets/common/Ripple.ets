@@ -49,7 +49,7 @@
  * - **每圈间隔 30 ms**：
  *   [QT] BoardWidget.cpp:22 `constexpr int kTickMs = 30;`（共用动画时钟，一 tick 一帧）
  *   [QT] BoardWidget.cpp:30 `constexpr int kRippleStagger = 1;`（每圈 1 tick）
- *   → 一圈 = 30 ms。**不是每格 30 ms，是每「圈」30 ms**；同一圈里的格子同时开始淡出。
+ *   一圈 = 30 ms。**不是每格 30 ms，是每「圈」30 ms**；同一圈里的格子同时开始淡出。
  *
  * - **单格淡出 150 ms**：
  *   [QT] BoardWidget.cpp:31 `constexpr int kRippleFadeTicks = 150 / kTickMs;`（= 5 tick）
