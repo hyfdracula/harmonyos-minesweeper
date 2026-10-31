@@ -12,6 +12,7 @@
  */
 
 import { preferences } from '@kit.ArkData';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 
 const STORE_NAME: string = 'saolei_stats';
@@ -69,7 +70,8 @@ export class GameStats {
         }
       }
     } catch (err) {
-      console.error('[GameStats] 读取存档失败: ' + (err as Error).message);
+      console.error('[GameStats] 读取存档失败: ' + (err as BusinessError).message +
+        ' / ' + (err as BusinessError).code);
     }
   }
 
@@ -93,8 +95,10 @@ export class GameStats {
       await store.put('boardStyle', board);
       await store.put('gameStyle', game);
       await store.flush();
+      console.info('[GameStats] 外观已保存 board=' + board + ' game=' + game);
     } catch (err) {
-      // 存档失败不影响游戏
+      console.error('[GameStats] 保存外观失败: ' + (err as BusinessError).message +
+        ' / ' + (err as BusinessError).code);
     }
   }
 

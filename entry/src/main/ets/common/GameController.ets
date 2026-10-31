@@ -83,6 +83,8 @@ export class GameController {
   stripTop: number = 0;
   /** 棋盘能用的纵向高度（菜单栏下沿 ~ 状态条上沿），设备像素 */
   boardAreaH: number = 0;
+  /** 状态条是否钉在画布底边（HUD 模式）——这时它盖住棋盘下沿，点击不能落到棋盘上 */
+  hudActive: boolean = false;
 
   /** 计时（秒） */
   seconds: number = 0;
@@ -331,18 +333,20 @@ export class GameController {
     // 坑（2026-10-31，LAYOUT-MATRIX v3.0 §3）：状态条原来画在 boardBottom 之下，
     // 棋盘纵向溢出时整条状态条会掉到屏幕外——计时和雷数都看不见（和横向超宽时
     // 雷数计数器跑出屏幕是同一类问题）。钉到画布底边后，无论棋盘多大都看得见。
-    const stripBelowBoard: boolean = menuPx + boardH + stripH <= this.canvasH;
+    const groupFits: boolean = menuPx + boardH + stripH <= this.canvasH;
     const hudTop: number = this.canvasH - stripH;
     // 棋盘能用的纵向空间：装得下就用「菜单栏下沿 ~ 画布底」；钉 HUD 时只到 HUD 顶
-    this.boardAreaH = stripBelowBoard ? availH : Math.max(1, hudTop - menuPx);
-    // 装不下就顶对齐菜单栏下沿（居中会把顶部推到菜单栏底下，那几行既看不见也点不着）
-    const frameYBase: number = boardH > this.boardAreaH
-      ? menuPx
-      : menuPx + Math.round((this.boardAreaH - boardH) / 2);
+    this.boardAreaH = groupFits ? availH : Math.max(1, hudTop - menuPx);
+    // 整组（棋盘 + 状态条）在剩余空间里居中；装不下就顶对齐菜单栏下沿
+    //（居中会把顶部推到菜单栏底下，那几行既看不见也点不着）
+    const frameYBase: number = groupFits
+      ? menuPx + Math.round((availH - boardH - stripH) / 2)
+      : menuPx;
     this.frameY = frameYBase + this.panY;
     this.boardX = this.frameX;
     this.boardY = this.frameY;
-    this.stripTop = stripBelowBoard ? (this.boardY + boardH) : hudTop;
+    this.stripTop = groupFits ? (this.boardY + boardH) : hudTop;
+    this.hudActive = !groupFits;
   }
 
   /** 菜单栏高度（设备像素） */
@@ -366,10 +370,14 @@ export class GameController {
     // 纵向按**棋盘**与「菜单栏下沿 ~ 状态条上沿」这块可视区比：
     // 状态条钉在画布底边（HUD）时，可视区要减去状态条那条带子，
     // 否则最后一行会被 HUD 压住却还允许往下拖。
+    //
+    // 纵向是**单向**的：只能往上推（panY ≤ 0），推到棋盘下沿与 HUD 上沿齐平为止。
+    // 对称范围（±溢出量/2）会让最后一行永远缺一截——棋盘只比可视区高 90 px 时，
+    // 居中那个位置上下各露 45 px，最后一行被 HUD 吃掉 45 px，点不准。
     const boardH: number = e.rowCount * this.tile;
-    const limY: number = boardH > this.boardAreaH ? (boardH - this.boardAreaH) / 2 : 0;
+    const overV: number = boardH > this.boardAreaH ? boardH - this.boardAreaH : 0;
     this.panX = Math.max(-limX, Math.min(limX, this.panX));
-    this.panY = Math.max(-limY, Math.min(limY, this.panY));
+    this.panY = overV > 0 ? Math.max(-overV, Math.min(0, this.panY)) : 0;
   }
 
   /** 缩放到指定档位（1..MAX_SCALE_INDEX），以画布坐标 (fx,fy)（设备像素）为锚点 */
@@ -790,6 +798,10 @@ export class GameController {
   /** 设备像素坐标 → 格子索引，-1 表示不在棋盘上 */
   hitTest(px: number, py: number): number {
     const e = this.engine;
+    // 状态条钉在画布底边（HUD）时，它盖住棋盘的下沿；点到 HUD 上不算点棋盘
+    if (this.hudActive && py >= this.stripTop) {
+      return -1;
+    }
     const c = Math.floor((px - this.boardX) / this.tile);
     const r = Math.floor((py - this.boardY) / this.tile);
     if (r < 0 || r >= e.rowCount || c < 0 || c >= e.colCount) {

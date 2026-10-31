@@ -75,12 +75,18 @@ export struct MinefieldCanvas {
   aboutToAppear(): void {
     this.density = display.getDefaultDisplaySync().densityPixels;
     const abilityCtx = getContext(this) as common.UIAbilityContext;
-    // 读统计（局数、最快纪录），失败不影响游戏
-    GameStats.load(abilityCtx).catch(() => {
-    });
     // 音效播放器需要 AbilityContext 才能取 rawfile
     SoundPlayer.init(abilityCtx);
-    this.controller.atlas.load(abilityCtx).then(() => {
+    // 读统计（含**外观设置**）和图集，**两个都完成**才开局。
+    //
+    // 坑（2026-10-31 实测）：之前这两步是并行的（GameStats.load 不 await），
+    // 结果「外观设置」的还原跑在存档读到之前 —— 读到的还是默认值 0，
+    // 表现为「选了绿色棋盘，重启后又变回蓝色」。
+    // 现在串起来：先等存档，再等图集，然后才套用存档里的外观。
+    const statsReady: Promise<void> = GameStats.load(abilityCtx).catch(() => {
+    });
+    const atlasReady: Promise<void> = this.controller.atlas.load(abilityCtx);
+    statsReady.then(() => atlasReady).then(() => {
       // 恢复上次的外观设置（原版重启后保留 ✓；存档读失败就还是默认蓝棋盘）
       const bs: BoardStyle = GameStats.boardStyle === 1 ? BoardStyle.Green : BoardStyle.Blue;
       const gs: GameStyle = GameStats.gameStyle === 1 ? GameStyle.Flowers : GameStyle.Mines;
