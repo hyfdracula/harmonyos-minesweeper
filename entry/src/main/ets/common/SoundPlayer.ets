@@ -3,7 +3,7 @@
  *
  * 音效文件来自 win7-assets/audio（微软原版）：
  *   gameStart / gameWin / gameLose / tileSingle / tileMultiple / invalidMove /
- *   zeroDevelop / mineBombStart / mineBombRun / mineBombEnd / dbButtonClickFlag
+ *   firstPaint / zeroDevelop / mineBombStart / mineBombRun / mineBombEnd / dbButtonClickFlag
  *   （已复制到 entry/src/main/resources/rawfile）
  *
  * 播放方式：用 resourceManager.getRawFd 拿到 rawfile 的 fd，交给 AVPlayer.fdSrc，
@@ -21,6 +21,8 @@ export class Sound {
   static readonly TILE_SINGLE: string = 'tileSingle';
   static readonly TILE_MULTIPLE: string = 'tileMultiple';
   static readonly INVALID_MOVE: string = 'invalidMove';
+  /** 第一下的那声（参考实现在「首点开格」时播的就是它，不是 tileSingle） */
+  static readonly FIRST_PAINT: string = 'firstPaint';
   static readonly FLAG: string = 'dbButtonClickFlag';
   static readonly BOMB_START: string = 'mineBombStart';
   static readonly BOMB_RUN: string = 'mineBombRun';

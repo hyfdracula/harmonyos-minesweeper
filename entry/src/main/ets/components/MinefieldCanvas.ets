@@ -83,7 +83,7 @@ export struct MinefieldCanvas {
       if (this.controller.engine.rowCount <= 0) {
         // 第一次进来：按当前难度开新局
         const cfg = GameController.configOf(this.controller.difficulty);
-        this.controller.startNewGame(cfg.rows, cfg.cols, cfg.mines);
+        this.controller.startNewGame(cfg.rows, cfg.cols, cfg.mines, true);
       } else {
         // 页面重建（折叠/旋转）：接着原局继续
         this.controller.resume();

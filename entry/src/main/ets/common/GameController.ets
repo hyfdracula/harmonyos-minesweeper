@@ -144,7 +144,13 @@ export class GameController {
     this.startNewGame(cfg.rows, cfg.cols, cfg.mines);
   }
 
-  startNewGame(rows: number, cols: number, mines: number): void {
+  /**
+   * 开新局。
+   *
+   * @param silent true = 不播开局音（应用刚启动时用：原版启动是静音的，
+   *               只有玩家主动「新建/换难度/再玩一局」才有那一声）。
+   */
+  startNewGame(rows: number, cols: number, mines: number, silent: boolean = false): void {
     this.engine.reset(rows, cols, mines);
     this.seconds = 0;
     this.stopTimer();
@@ -160,7 +166,9 @@ export class GameController {
     this.panY = 0;
     this.layout();
     this.draw();
-    SoundPlayer.play(Sound.GAME_START);
+    if (!silent) {
+      SoundPlayer.play(Sound.GAME_START);
+    }
   }
 
   /** 画布就绪 / 尺寸变化 */
@@ -520,6 +528,9 @@ export class GameController {
       if (outcome.lost) {
         // 踩雷：原版是三段爆炸声
         SoundPlayer.playSequence([Sound.BOMB_START, Sound.BOMB_RUN, Sound.BOMB_END], 260);
+      } else if (wasReady) {
+        // 第一下：原版播 firstPaint（不是 tileSingle）
+        SoundPlayer.play(Sound.FIRST_PAINT);
       } else if (outcome.opened.length > 1) {
         SoundPlayer.play(Sound.TILE_MULTIPLE);
       } else {
@@ -699,11 +710,13 @@ export class GameController {
     WinDialogPainter.draw(ctx, d, this.dialogScale, this.dialogScale * this.pxScale,
       this.v(this.dialogOx), this.v(this.dialogOy));
     // 可选图标（例如「关于」框里的雷）
+    // 注意：drawLogical 的入参是**设备像素**（内部自己乘 pxScale 转 vp），
+    // 这里不要再乘 pxScale，否则换算两次会画偏（Codex 复审 P2）。
     if (d.icon !== undefined && d.iconPos !== undefined) {
-      const sVp = this.dialogScale * this.pxScale;
       this.atlas.drawLogical(ctx, this.atlas.gameSheet, d.icon,
-        this.v(this.dialogOx) + d.iconPos[0] * sVp,
-        this.v(this.dialogOy) + d.iconPos[1] * sVp, sVp);
+        this.dialogOx + d.iconPos[0] * this.dialogScale,
+        this.dialogOy + d.iconPos[1] * this.dialogScale,
+        this.dialogScale);
     }
   }
 
