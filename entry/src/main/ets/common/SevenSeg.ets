@@ -211,16 +211,34 @@ export class SevenSeg {
           cellY + SevenSeg.TH + SevenSeg.HL, SevenSeg.CELL_W - 2 * SevenSeg.TV, SevenSeg.TH, sDev, pxScale);
       }
       if ((mask & SEG_FLAG) !== 0) {
-        // 「1」左上角的小旗：**紧挨 b 竖段（x 9..11）的左沿**（x 7..8），
-        // 高度对齐 b 的上端。原图 helpBoard 里旗就在竖笔左上角紧贴着。
-        SevenSeg.rect(ctx, devX0, devY0, cellX + SevenSeg.CELL_W - SevenSeg.TV - 2, cellY + SevenSeg.TH,
-          2, 2, sDev, pxScale);
+        // 「1」左上角的小旗 —— 按 Win7 原版 helpBoard.png 里「18」的「1」逐像素画：
+        //
+        //   原版（1 倍像素）:
+        //     y=180  ..+#..     ← 旗的上端只有 2 像素，紧贴竖笔
+        //     y=181  .#+#..     ← 旗的下端向左展开成 5 像素
+        //   也就是一个**楔形**（上窄下宽的斜边）。
+        //
+        // 我们最早画的是 2×2 的**实心方块**（横着的一小段），
+        // 加上底部那条衬线横线，整个字就成了「上横 + 右竖 + 下横」——
+        // 正好是「0」的右半边（用户 2026-11-02 反馈：「多显示了半个 0 的右边」）。
+        // 后来改成 3 级阶梯的斜线也不行：1 个单位 = 8 像素，三个方块各自分开，
+        // 远看还是一条横杠。
+        // 现在按原版画成两行楔形：
+        //   上行 1 个单位宽（贴着竖笔），下行 3 个单位宽（向左展开）。
+        SevenSeg.rect(ctx, devX0, devY0,
+          cellX + SevenSeg.CELL_W - SevenSeg.TV - 1, cellY,
+          1, 1, sDev, pxScale);
+        SevenSeg.rect(ctx, devX0, devY0,
+          cellX + SevenSeg.CELL_W - SevenSeg.TV - 3, cellY + 1,
+          3, 1, sDev, pxScale);
       }
       if ((mask & SEG_BASE1) !== 0) {
-        // 「1」的衬线底横：在**最下一行**，以竖笔（x 9..11）为中心向两侧伸出（x 7..11）。
-        // 不是标准 d 段（d 是横跨格宽中间的 x 3..8），所以单独画。
-        SevenSeg.rect(ctx, devX0, devY0, cellX + SevenSeg.CELL_W - SevenSeg.TV - 2,
-          cellY + SevenSeg.CELL_H - SevenSeg.TH, SevenSeg.TV + 2, SevenSeg.TH, sDev, pxScale);
+        // 「1」的衬线底横：在**最下一行**，以竖笔右端为基准向左伸出 1 个单位。
+        // 原版是 5 像素宽、竖笔 2 像素（衬线约为竖笔宽的 2.5 倍）；
+        // 我们原来伸出去 3 个单位（是竖笔的 3 倍），和竖笔一起又成了「0」的右半边，
+        // 现在收成 2 个单位宽，和原版比例接近。
+        SevenSeg.rect(ctx, devX0, devY0, cellX + SevenSeg.CELL_W - SevenSeg.TV - 1,
+          cellY + SevenSeg.CELL_H - SevenSeg.TH, 2, SevenSeg.TH, sDev, pxScale);
       }
     }
   }
