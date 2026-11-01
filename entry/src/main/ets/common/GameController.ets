@@ -192,6 +192,7 @@ export class GameController {
    *               只有玩家主动「新建/换难度/再玩一局」才有那一声）。
    */
   startNewGame(rows: number, cols: number, mines: number, silent: boolean = false): void {
+    console.info('[GameController] 新局 ' + rows + 'x' + cols + ' 雷=' + mines);
     this.engine.reset(rows, cols, mines);
     this.seconds = 0;
     this.stopTimer();
@@ -313,7 +314,12 @@ export class GameController {
       // 而格边/原点是**随设备变**的（两个模拟器的画布尺寸不同），写死就会在别的设备上假失败。
       // 2026-11-01（Codex 复审 P2）加。
       ' 盘面=' + this.engine.rowCount + 'x' + this.engine.colCount +
-      ' 雷=' + this.engine.mineCount);
+      ' 雷=' + this.engine.mineCount +
+      // 外观（棋盘色/玩法）也打进日志：跑测器要断言「点了缩略图**没有**生效」，
+      // 而颜色框会把整块棋盘盖住 —— 靠像素比不出来（框盖住的地方比到的是框里的选中框），
+      // 靠日志里的外观最准。2026-11-01 加。
+      ' 外观=' + (this.atlas.boardStyle === BoardStyle.Green ? '绿' : '蓝') +
+      '/' + (this.atlas.gameStyle === GameStyle.Flowers ? '花园' : '扫雷'));
   }
 
   /**
@@ -747,6 +753,7 @@ export class GameController {
     const e = this.engine;
     const elapsed = Date.now() - this.dealStart;
     if (elapsed >= DealIn.TOTAL_MS) {
+      console.info('[DealIn] 发牌动画结束 elapsed=' + elapsed);
       this.stopDealIn();
       return false;
     }
@@ -1722,6 +1729,14 @@ export class GameController {
     if (hit !== null && Appearance.owns(hit)) {
       if (hit === 'appearance:ok') {
         this.atlas.applyStyle(Appearance.pendingBoard, Appearance.pendingGame);
+        // 外观变了要重新打一次布局日志（跑测器靠日志里的「外观=」断言
+        // 「点了缩略图到底生效没有」——颜色框把棋盘整个盖住，像素比不出来）。
+        this.layout();
+        // 再单独打一条：跑测器断言「点缩略图 + 关框之后**没有**这条」，
+        // 就说明外观**没有**被偷偷应用上（取消/红叉都不该打这条）。
+        console.info('[Dialog] 应用外观 ' +
+          (Appearance.pendingBoard === BoardStyle.Green ? '绿' : '蓝') + '/' +
+          (Appearance.pendingGame === GameStyle.Flowers ? '花园' : '扫雷'));
         // 原版重启后保留外观 ✓ → 存进 preferences
         GameStats.saveStyle(
           Appearance.pendingBoard === BoardStyle.Green ? 1 : 0,
@@ -1731,6 +1746,7 @@ export class GameController {
       } else if (hit === 'appearance:cancel') {
         this.dialog = null;
       } else if (Appearance.select(hit)) {
+        console.info('[Dialog] 点到缩略图 ' + hit);
         this.dialog = Appearance.spec();
       }
       this.draw();
