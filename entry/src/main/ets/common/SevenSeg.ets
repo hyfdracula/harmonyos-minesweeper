@@ -115,23 +115,34 @@ export class SevenSeg {
    * 完全落在内区里，右缘留 1 个单位空。
    */
   static readonly SLOT_X0: number = 3;
-  /** 单个数字格尺寸（参考像素） */
   /**
-   * 格宽 10：面板绿色内区宽 33，三位要装下 → 每格 10、格间留 2；
-   * 原来的 12 会让三格挤出内区（见 SLOT_X0 的注释）。
-   * 格高 16：上下各留 2 个单位的边。
+   * 2026-11-02 真机实拍对比修正：**原来的数字太大太粗**。
+   *
+   * 面板（RECT_COUNTER）是 40×21。原版帮助图 helpBoard.png 的状态条里，
+   * 数字只占面板高度的 4~5 成，笔画约为格宽的 20%；
+   * 而原来是 16/21 = 76% 高、笔画 3/12 = 25% 宽 —— 数字几乎撑满面板，
+   * 视觉上「又大又粗、挤在面板里」。
+   *
+   * 现在：格 9×12（占面板高度 57%），笔画 2，纵向居中（(21-12)/2 取 4）。
    */
-  static readonly CELL_W: number = 10;
-  static readonly CELL_H: number = 16;
-  /** 数字格在面板内的 y 偏移（(21 - 16) / 2 = 2.5，取 2） */
-  static readonly CELL_Y: number = 2;
+  static readonly CELL_W: number = 9;
+  static readonly CELL_H: number = 11;
+  /** 数字格在面板内的 y 偏移（(21 - 11) / 2 = 5） */
+  static readonly CELL_Y: number = 5;
 
-  /** 竖段粗细（参考像素） */
-  static readonly TV: number = 3;
-  /** 横段粗细（参考像素） */
-  static readonly TH: number = 2;
-  /** 半高竖段长度（参考像素），3*TH + 2*HL = CELL_H */
-  static readonly HL: number = 5;
+  /**
+   * 竖段粗细（参考像素）。
+   *
+   * 2026-11-02 与 Win7 原版 helpBoard.png 的「18」逐像素对照后改成 **1**：
+   * 原版数字的笔画只有面板宽度的 1/31 ≈ 1 个参考单位（14 倍放大看是单像素线），
+   * 我们用 2 个单位（占格宽 22%）画出来是厚重的方块，「1」上那面小旗和竖笔
+   * 还会连成一坨，玩家看起来像「0 的右半边」。
+   */
+  static readonly TV: number = 1;
+  /** 横段粗细（参考像素），同样取 1（原版是细线） */
+  static readonly TH: number = 1;
+  /** 半高竖段长度（参考像素），3*TH + 2*HL = CELL_H  →  3*1 + 2*4 = 11 */
+  static readonly HL: number = 4;
 
   /** 显示下限：三位放不下更小的负数，钳到 -99（最多插 99 面旗的真实极值） */
   static readonly MIN_VALUE: number = -99;
