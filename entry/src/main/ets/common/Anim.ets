@@ -22,6 +22,9 @@
  * 3) **胜利扫描条**（随拆雷一起，自下而上扫过棋盘，3 秒）
  *    矩形 = {0, 912, 275, 62}，横向拉伸到棋盘宽度。
  *
+ * 另外，判负时原版不是只炸踩中的那一颗，而是一串**冲击波级联**：
+ * 踩中的先炸，其余没插旗的雷按距离依次炸（见下面 `Boom` 与 `boomStartMs`）。
+ *
  * 本文件的矩形都是**逻辑坐标**（存储像素要 ×SPRITE_SCALE）。
  */
 
@@ -30,6 +33,23 @@ export interface Beam {
   /** 格索引 */
   cell: number;
   /** 光束开始的时刻（ms，从胜利动画开始算） */
+  startMs: number;
+}
+
+/**
+ * 一颗正在爆炸的雷（判负时的**冲击波级联**）。
+ *
+ * 原版（Win7）：踩中的那颗先炸（起跳 0），其余**没插旗**的雷按冲击波环
+ * 到达的时刻依次炸 —— 离得越远炸得越晚，中间那段空白就是延迟。
+ * 依据：linux-minesweeper/src/ui/BoardWidget.cpp:167-206（startExplosion）
+ *   - 踩中的那颗：start = 0
+ *   - 其余的：start = max(1, round(dist * kRingStagger)) tick，dist 是欧氏格距
+ *   - 插了旗的雷不炸（`cell.mark == Mark::Flag` 直接跳过）
+ */
+export interface Boom {
+  /** 格索引 */
+  cell: number;
+  /** 起爆时刻（ms，从爆炸序列开始算） */
   startMs: number;
 }
 
@@ -62,8 +82,34 @@ export class Anim {
   static readonly EXPLODE_SLOWMO: number = 1;
 
   static tripActive: boolean = false;
-  static tripFrame: number = 0;
-  static tripCell: number = -1;
+
+  /**
+   * 判负时的爆炸级联：一组雷 + 各自的起爆时刻。
+   *
+   * 原来是**单格**（tripCell），只炸踩中的那一颗；
+   * 原版是冲击波级联：踩中的先炸，其余没插旗的雷按距离依次炸。
+   */
+  static booms: Boom[] = [];
+
+  /**
+   * 冲击波环的推进速度：每格距离几个 tick。
+   * 依据：linux-minesweeper/src/ui/BoardWidget.cpp:30 `kRingStagger = 5`，
+   *       同文件 199-200 行 `start = qMax(1, qRound(dist * kRingStagger))`。
+   */
+  static readonly RING_STAGGER_TICKS: number = 5;
+
+  /**
+   * 一个动画 tick 多少 ms。
+   *
+   * 依据：参考实现的动画时钟 `kTickMs = 30`（BoardWidget.cpp:22），
+   * 我们的动画计时器间隔也是 30 ms（GameController.ets 的 setInterval(..., 30)）。
+   *
+   * 注意这**不是**每帧时长（每帧是 1000/23 = 43.478 ms）：
+   * 43.478 是「一帧画多久」，这里是「时钟走一格多久」，
+   * 参考实现的 kRingStagger 用的就是后者。
+   */
+  static readonly RING_TICK_MS: number = 30;
+
   /**
    * 爆炸动画已经播了多久（ms）。
    *
@@ -84,18 +130,78 @@ export class Anim {
     ];
   }
 
-  static startTrip(cellIndex: number): void {
+  /** 每帧时长（含取证用慢放倍率） */
+  static explodeFrameMs(): number {
+    return Anim.EXPLODE_FRAME_MS * Anim.EXPLODE_SLOWMO;
+  }
+
+  /** 一颗雷的爆炸从头到尾要多久（ms） */
+  static explodeDurationMs(): number {
+    return Anim.explodeFrameMs() * Anim.EXPLODE_FRAMES;
+  }
+
+  /**
+   * 某一颗雷的起爆时刻（ms）。
+   *
+   * @param dist 离踩中那颗雷的格数（欧氏距离）
+   */
+  static boomStartMs(dist: number): number {
+    const ticks = Math.max(1, Math.round(dist * Anim.RING_STAGGER_TICKS));
+    return ticks * Anim.RING_TICK_MS;
+  }
+
+  static startTrip(booms: Boom[]): void {
     Anim.tripActive = true;
-    Anim.tripFrame = 0;
     Anim.tripElapsed = 0;
-    Anim.tripCell = cellIndex;
+    Anim.booms = booms;
   }
 
   static stopTrip(): void {
     Anim.tripActive = false;
-    Anim.tripFrame = 0;
     Anim.tripElapsed = 0;
-    Anim.tripCell = -1;
+    Anim.booms = [];
+  }
+
+  /**
+   * 某一颗雷当前该显示第几帧；-1 = 还没轮到，或者已经放完了。
+   *
+   * 每颗雷有自己的时钟：起爆之后才走帧，没起爆就一直停在「没开始」。
+   */
+  static boomFrame(index: number): number {
+    if (!Anim.tripActive || index < 0 || index >= Anim.booms.length) {
+      return -1;
+    }
+    const dt = Anim.tripElapsed - Anim.booms[index].startMs;
+    if (dt < 0) {
+      return -1;
+    }
+    const f = Math.floor(dt / Anim.explodeFrameMs());
+    if (f >= Anim.EXPLODE_FRAMES) {
+      return -1;
+    }
+    return f;
+  }
+
+  /** 某格雷的起爆时刻；不在这次级联里返回 -1 */
+  static boomStartMsOfCell(cellIndex: number): number {
+    for (let i = 0; i < Anim.booms.length; i++) {
+      if (Anim.booms[i].cell === cellIndex) {
+        return Anim.booms[i].startMs;
+      }
+    }
+    return -1;
+  }
+
+  /** 整个爆炸序列什么时候结束（ms）：最后一颗雷放完 */
+  static tripEndMs(): number {
+    let end = 0;
+    for (let i = 0; i < Anim.booms.length; i++) {
+      const e = Anim.booms[i].startMs + Anim.explodeDurationMs();
+      if (e > end) {
+        end = e;
+      }
+    }
+    return end;
   }
 
   // ------------------------------------------------------ 胜利拆雷 + 扫描条
@@ -136,7 +242,18 @@ export class Anim {
     Anim.beams = [];
   }
 
-  /** 拆雷光束的源矩形（逻辑坐标，蓝色主题） */
+  /**
+   * 拆雷光束的源矩形（逻辑坐标，**只有蓝色主题**）。
+   *
+   * 注意：otherSheet.png 里并排放着**两套**拆雷动画：蓝色从 x=0 起，绿色从 x=364 起
+   * （7 帧 × (50+2) = 364；两者 alpha 完全相同，只有 RGB 染色不同：
+   *  蓝版均色 (46,60,148)、绿版均色 (50,147,46)）。
+   * 原版依据：linux-minesweeper/src/ui/Theme.h:146-151
+   *   `disarmFrame(BoardStyle s, int frame)` 里的 `x0 = Green ? 364 : 0`。
+   *
+   * **画的时候不要用这个函数**，用 Theme.ets 的 `disarmRectFor(frame, boardStyle)`
+   * —— 它会按棋盘样式选基址。GameController 的胜利光束绘制走的就是它。
+   */
   static disarmRect(frame: number): number[] {
     const f = Math.max(0, Math.min(Anim.DISARM_FRAMES - 1, frame));
     return [52 * (f % 7), 152 * Math.floor(f / 7), 50, 150];
@@ -151,18 +268,13 @@ export class Anim {
   static tick(dtMs: number): boolean {
     let more = false;
     if (Anim.tripActive) {
-      // 爆炸按**时间**推进（原来按帧计数，实际只跑了 690ms）
-      const frameMs = Anim.EXPLODE_FRAME_MS * Anim.EXPLODE_SLOWMO;
+      // 爆炸按**时间**推进（原来按帧计数，实际只跑了 690ms）。
+      // 现在是**级联**：每颗雷有自己的起爆时刻，
+      // 整个序列要等最后一颗雷放完（tripEndMs）才算结束。
       Anim.tripElapsed += dtMs;
-      const total = frameMs * Anim.EXPLODE_FRAMES;
-      if (Anim.tripElapsed >= total) {
-        Anim.tripActive = false;
-        Anim.tripFrame = 0;
-        Anim.tripElapsed = 0;
-        Anim.tripCell = -1;
+      if (Anim.tripElapsed >= Anim.tripEndMs()) {
+        Anim.stopTrip();
       } else {
-        Anim.tripFrame = Math.min(Anim.EXPLODE_FRAMES - 1,
-                                  Math.floor(Anim.tripElapsed / frameMs));
         more = true;
       }
     }

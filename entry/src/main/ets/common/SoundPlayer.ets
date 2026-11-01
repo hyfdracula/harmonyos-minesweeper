@@ -151,6 +151,22 @@ export class SoundPlayer {
     await player.play();
   }
 
+  /**
+   * 停掉某个正在播的音效（把播放器停住，不释放）。
+   *
+   * 为什么需要（2026-11-01，音效审计）：原版 `PlaySound(SND_ASYNC)` 的语义是
+   * 「同名音效重触发会打断前一次」；而我们爆炸时是「爆炸中音循环 + 结束时播结束音」，
+   * 如果结束音响起时爆炸中音还在放，两个声音会叠在一起 —— 原版是先停循环再放结束音。
+   */
+  static stop(name: string): void {
+    const p = SoundPlayer.players.get(name);
+    if (p === undefined) {
+      return;
+    }
+    p.stop().catch(() => {
+    });
+  }
+
   /** 释放所有播放器 */
   static dispose(): void {
     SoundPlayer.players.forEach((p: media.AVPlayer) => {

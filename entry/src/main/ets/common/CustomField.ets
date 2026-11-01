@@ -65,8 +65,7 @@ export const BTN_H: number = 25;
 export const BTN_OK_X: number = 116;
 export const BTN_CANCEL_X: number = 194;
 
-/** 三个输入框的标签 */
-export const LABELS: string[] = ['高度:', '宽度:', '雷数:'];
+/** 三个输入框的标签（内容在下面「取值范围」常量之后拼，避免上下限写死两处） */
 
 // ---- 取值范围（与 MinesweeperEngine 的 CUSTOM_* 一致） ----------------------
 
@@ -80,6 +79,26 @@ export const MAX_COLS: number = 30;
 export const MIN_MINES: number = 10;
 /** 雷数硬上限（24 行 × 30 列时正好 = 668） */
 export const MAX_MINES: number = 668;
+
+// ---- 三个输入框的标签 ------------------------------------------------------
+/**
+ * 标签**照抄 Win7 原版的写法：上下限直接写在标签里**。
+ *
+ * 依据（两份互相独立的 Win7 复刻）：
+ *   Lmy0217 `Minesweeper.rc:106-108`：
+ *     LTEXT "高度(9-24)(&H):" / "宽度(9-30)(&W):" / "雷数(10-668)(&M):"
+ *   linux-minesweeper `OptionsDialog.cpp:89-91`，注释原话：
+ *     "The Windows 7 custom limits, spelled out in the labels like it does."
+ *     form->addRow(tr("Height (9-24):"), m_rows) 等三行
+ *
+ * 标签由常量拼出来，改上下限时不会和标签脱节。
+ * （改之前这里是 `['高度:', '宽度:', '雷数:']`，范围只出现在底部提示行里。）
+ */
+export const LABELS: string[] = [
+  '高度(' + MIN_ROWS.toString() + '-' + MAX_ROWS.toString() + '):',
+  '宽度(' + MIN_COLS.toString() + '-' + MAX_COLS.toString() + '):',
+  '雷数(' + MIN_MINES.toString() + '-' + MAX_MINES.toString() + '):'
+];
 
 // ---- 颜色（沿用 WinDialog.ets 的 Win7 观感） --------------------------------
 
@@ -215,8 +234,9 @@ export class CustomField {
    *     否则追加到旧值后面
    *   - 追加后超过该框上限则**拒绝这次输入**（值保持不变，返回 false）
    *     高度上限 24、宽度上限 30、雷数上限 **668**（全局，见 maxOfField）
-   *   - 改了高度或宽度后，雷数若已超过**本盘面**的上限会被立刻收回到该上限
-   *     （本盘面上限 = maxMines(高度, 宽度)，是**确定时**真正生效的值）
+   *   - 改了高度或宽度**不会**动雷数框：「盘面收」统一在「确定」时由 clampSpec 做
+   *     （原版三个框互相独立：Win32 对话框里三个 EDITTEXT 互不影响，
+   *       盘面收只在 IDOK 时用 GetDlgIntOfRange 夹一次）
    *
    * 不做「下限」夹取：正在输入的中间值（比如高度先输了个 1）要保留，
    * 下限统一由 clampSpec 在「确定」时处理。
@@ -241,13 +261,12 @@ export class CustomField {
       return false;   // 超过该框上限：这次输入不接受，值保持不变
     }
     CustomField.setValue(s, idx, next);
-    // 行列变了 → 雷数上限跟着变，超上限的雷数收回来
-    if (idx === 0 || idx === 1) {
-      const maxM: number = CustomField.maxMines(s.height, s.width);
-      if (s.mines > maxM) {
-        s.mines = maxM;
-      }
-    }
+    // 改了高度/宽度**不**在这里把雷数收回来：
+    //   1) 原版三个框互相独立，盘面收只在「确定」时做（见 clampSpec）；
+    //   2) SPEC §5.8b 已定口径：下限与「确定时的盘面收」统一由 clampSpec 在按确定时处理。
+    // 坑（2026-10-31，custom-agent 审计）：原来这里会立刻把超上限的雷数收回来，
+    // 框里的数字当着用户的面偷偷变小。现在框里的数字不动，
+    // 由提示行当场说清「当前 N 将按 M 布雷」（见 hintText）。
     lastFocus = idx;
     replaceNext = false;
     return true;
@@ -284,6 +303,33 @@ export class CustomField {
     }
     s.focus = idx;
     replaceNext = true;
+  }
+
+  /**
+   * 底部提示行的文字（**只说动态的部分**）。
+   *
+   * 上下限是静态的，已经写在标签里（LABELS，照抄 Win7 原版写法），
+   * 所以提示行只负责两件事：
+   *   1) 这个盘面实际最多能放多少雷（与确定时的夹取用同一个 maxMines()）；
+   *   2) 框里的雷数超了上限时，按确定后会变成多少 —— 不做静默替换。
+   *
+   * 行列越界（正在输入的中间值，或超出 9-24 / 9-30）也在这里说清楚：
+   * 确定时会被夹回合法区间，这时提示的是**夹紧后**盘面的上限。
+   *
+   * 坑（2026-10-31，custom-agent 审计 P10）：原来的提示行把上下限又重复了一遍，
+   * 并且只按夹紧后的行列报上限，用户刚敲下一个「1」提示就跳成 9 行的 65，
+   * 看着像坏了。现在：越界时明说「超范围」，上限始终按确定时实际生效的盘面算。
+   */
+  static hintText(s: CustomSpec): string {
+    const maxM: number = CustomField.maxMines(s.height, s.width);
+    const rowsBad: boolean = s.height < MIN_ROWS || s.height > MAX_ROWS;
+    const colsBad: boolean = s.width < MIN_COLS || s.width > MAX_COLS;
+    let hint: string = (rowsBad || colsBad) ? '高度/宽度超范围，最多 ' : '本盘面最多 ';
+    hint += maxM.toString() + ' 雷';
+    if (s.mines > maxM) {
+      hint += '，当前 ' + s.mines.toString() + ' 将按 ' + maxM.toString() + ' 布雷';
+    }
+    return hint;
   }
 
   /**
@@ -382,27 +428,19 @@ export class CustomField {
       ctx.fillText(CustomField.textOf(s, i), ex + 6 * sVp, midY);
     }
 
-    // 底部提示行（把取值范围和当前上限直接告诉用户）
+    // 底部提示行（把**当前盘面实际生效**的上限告诉用户）
     ctx.fillStyle = C_HINT;
     ctx.font = `${HINT_SIZE * sDev}px sans-serif`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    // 提示行：输入范围照抄原版（10-668），但把**本盘面的实际上限**也说清楚——
-    // 确定时按盘面夹取（见 clampSpec），不说清楚用户会以为填 668 就有 668 颗雷。
+    // 提示行只说动态的事：上下限是静态的，已经写在标签里（LABELS，照抄 Win7）。
+    // 剩下的两件：1) 这个盘面实际最多能放多少雷；2) 框里的雷数超上限时按确定会变成多少。
     //
     // 坑（2026-10-31，custom-agent 裁决）：夹取原来是**静默**的——9×9 填 500，
     // 点确定后悄悄变成 65，用户毫无察觉。原版两处参考实现都会把生效值写回
     // （Lmy `Minesweeper.cpp:234/240/246` 用 SetDlgItemInt；原版 XP 也在对话框里夹）。
     // 我们不写回输入框（框马上就关了，写回也看不见），改成**当场把生效值说清楚**。
-    const maxM: number = CustomField.maxMines(s.height, s.width);
-    let hint: string = '高度 ' + MIN_ROWS.toString() + '-' + MAX_ROWS.toString() +
-      '，宽度 ' + MIN_COLS.toString() + '-' + MAX_COLS.toString() +
-      '，雷数 ' + MIN_MINES.toString() + '-' + MAX_MINES.toString() +
-      '（本盘面最多 ' + maxM.toString() + '）';
-    if (s.mines > maxM) {
-      hint += '，当前 ' + s.mines.toString() + ' 将按 ' + maxM.toString() + ' 布雷';
-    }
-    ctx.fillText(hint, oxVp + HINT_X * sVp, oyVp + HINT_Y * sVp);
+    ctx.fillText(CustomField.hintText(s), oxVp + HINT_X * sVp, oyVp + HINT_Y * sVp);
 
     // 底部两个按钮
     CustomField.drawButton(ctx, '确定(O)', oxVp + BTN_OK_X * sVp, oyVp + BTN_Y * sVp,

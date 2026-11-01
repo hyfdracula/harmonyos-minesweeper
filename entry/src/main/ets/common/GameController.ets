@@ -21,7 +21,7 @@ import { Appearance } from './Appearance';
 import { SevenSeg } from './SevenSeg';
 import { CustomField, CustomSpec, DLG_W, DLG_H } from './CustomField';
 import { NumKeypad } from './NumKeypad';
-import { Anim } from './Anim';
+import { Anim, Boom } from './Anim';
 import { Ripple, RippleStep } from './Ripple';
 import { StatsWindowPainter, StatsData, StatsLevel } from './StatsWindow';
 import { DealIn } from './DealIn';
@@ -415,6 +415,9 @@ export class GameController {
     this.clampPan();
     this.applyGeometry();
     this.draw();
+    // 缩放档位打进日志：真机上双指捏合没法用 uitest 注入，只能靠这行确认
+    // 「捏合真的生效了、捏到了第几档」。docs\REAL-DEVICE-CHECKLIST.md 的第 11 节就靠它。
+    console.info('[Touch] 捏合 档位n=' + this.scaleIndex);
   }
 
   /** 按设备像素平移棋盘 */
@@ -459,6 +462,7 @@ export class GameController {
       }
       this.drawBoardArea(ctx);
       this.drawBoard(ctx);
+      this.drawExplosions(ctx);
       this.drawScanBar(ctx);
       this.drawStatusStrip(ctx);
       this.drawMenu(ctx);
@@ -521,6 +525,7 @@ export class GameController {
     const e = this.engine;
     const u = this.unit;
     const tile = this.tile;
+    const isFlower = this.atlas.gameStyle === GameStyle.Flowers;
     for (let r = 0; r < e.rowCount; r++) {
       for (let c = 0; c < e.colCount; c++) {
         const cell = e.cellAt(r, c);
@@ -556,23 +561,25 @@ export class GameController {
             }
           }
 
-          if (cell.exploded) {
-            // 踩中的那颗雷
-            this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_MINE, x, y, u);
-            // 爆炸动画（只在踩中的那一格上播）
-            if (Anim.tripActive && idx === Anim.tripCell) {
-              // 原版帧是 57x57 的整块（含溢出格子的部分），按原版偏移 (-18,-18) 画，
-              // 不能居中缩放，否则爆炸会缩水。
-              const isFlower = this.atlas.gameStyle === GameStyle.Flowers;
-              const rect = isFlower ? flowerTripRect(Anim.tripFrame) : Anim.explodeRect(Anim.tripFrame);
-              const off = isFlower ? FLOWER_TRIP_OFFSET : Anim.EXPLODE_OFFSET;
-              this.atlas.draw(ctx, this.atlas.otherSheet, rect,
-                x + off[0] * u, y + off[1] * u,
-                rect[2] * u, rect[3] * u);
+          if (cell.mine) {
+            // 踩中的那颗雷，以及判负时引擎翻开的其它未插旗的雷。
+            //
+            // 原版是**冲击波级联**（参考实现 BoardWidget.cpp:641-645、667-680）：
+            //  - 还没轮到的那颗雷仍然**盖在凸起砖下面**，等冲击波扫到它才炸开；
+            //  - 矿雷是起爆就画出来；花园玩法的花是「从无到有」长出来的，
+            //    所以花开完才出现（参考实现那一行是
+            //    `Flowers ? finished : started`）。
+            const boomStart = Anim.tripActive ? Anim.boomStartMsOfCell(idx) : -1;
+            if (boomStart < 0) {
+              this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_MINE, x, y, u);
+            } else if (Anim.tripElapsed < boomStart) {
+              // 还没轮到：盖着凸起砖（和未揭开的格子一样）
+              this.atlas.drawLogical(ctx, this.atlas.boardSheet,
+                normalTileRect(gradientFrame(r, c, e.rowCount, e.colCount)), x, y, u);
+            } else if (!isFlower || Anim.tripElapsed >= boomStart + Anim.explodeDurationMs()) {
+              // 矿雷：起爆就画雷；花园：花开完才画花
+              this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_MINE, x, y, u);
             }
-          } else if (cell.mine) {
-            // 判负时引擎把未插旗的雷全部翻开，这里补上雷
-            this.atlas.drawLogical(ctx, this.atlas.gameSheet, RECT_MINE, x, y, u);
           } else if (cell.misflagged) {
             this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_FLAG, x, y, u);
             this.atlas.drawLogical(ctx, this.atlas.boardSheet, RECT_MISFLAG, x, y, u);
@@ -610,6 +617,44 @@ export class GameController {
           }
         }
       }
+    }
+  }
+
+  /**
+   * 画判负的爆炸级联。
+   *
+   * **必须在整块棋盘画完之后单独画**（原版如此）：
+   * 参考实现 BoardWidget.cpp:751-775 的注释写得很清楚 ——
+   * 「The loss cascade's explosions, painted over the grid so each fireball
+   * can spill across its neighbours' tiles」。
+   *
+   * 以前我们是在格子循环**里面**画的，于是后画的邻格会把火球溢出到
+   * 邻格的那部分盖掉；爆炸帧是 57×57 的整块、按原版偏移 (-18,-18) 画，
+   * 确实会溢出格子约一格，必须画在棋盘之上。
+   */
+  private drawExplosions(ctx: CanvasRenderingContext2D): void {
+    if (!Anim.tripActive || Anim.booms.length === 0) {
+      return;
+    }
+    const e = this.engine;
+    const u = this.unit;
+    const isFlower = this.atlas.gameStyle === GameStyle.Flowers;
+    for (let i = 0; i < Anim.booms.length; i++) {
+      const frame = Anim.boomFrame(i);
+      if (frame < 0) {
+        continue;                       // 还没轮到，或者已经放完了
+      }
+      const idx = Anim.booms[i].cell;
+      const r = Math.floor(idx / e.colCount);
+      const c = idx % e.colCount;
+      const x = this.boardX + c * this.tile;
+      const y = this.boardY + r * this.tile;
+      // 原版帧是整块（含溢出格子的部分），按原版偏移画，不能居中缩放
+      const rect = isFlower ? flowerTripRect(frame) : Anim.explodeRect(frame);
+      const off = isFlower ? FLOWER_TRIP_OFFSET : Anim.EXPLODE_OFFSET;
+      this.atlas.draw(ctx, this.atlas.otherSheet, rect,
+        x + off[0] * u, y + off[1] * u,
+        rect[2] * u, rect[3] * u);
     }
   }
 
@@ -665,18 +710,6 @@ export class GameController {
   private sweepBottom(): number {
     const raw: number = this.boardY + this.engine.rowCount * this.tile;
     return this.hudActive ? Math.min(raw, this.stripTop) : raw;
-  }
-
-  /**
-   * 扫描条的高度（设备像素）。
-   *
-   * 必须与 Anim.scanBarRect() 里的算法一致（那边按原版保持长宽比：
-   * barH = 棋盘宽 × 源高/源宽 = boardW × 62/275），否则拆雷光束的起跳时刻
-   * 会和条实际扫到那一行的时刻对不上（条到了、光束还没开始）。
-   */
-  private scanBarHeight(): number {
-    const boardW: number = this.engine.colCount * this.tile;
-    return Math.max(1, Math.round(boardW * Anim.SCAN_BAR[3] / Anim.SCAN_BAR[2]));
   }
 
   // ------------------------------------------------------------ 新局发牌动画
@@ -925,8 +958,13 @@ export class GameController {
         // 踩雷：原版是「爆炸开始 → 爆炸中(循环) → 爆炸结束」三段。
         // 参考实现：爆炸动画 25 帧 × 23ms = 575ms，动画结束后循环播爆炸中音，最后播结束音。
         // 本项目动画 8 帧 × 70ms = 560ms，与原版动画时长基本一致。
-        SoundPlayer.play(Sound.BOMB_START);
-        this.playBombTail();
+        //
+        // 花园（花朵）玩法**不播爆炸三段**：原版的 mineTripped() 在花园模式下直接返回
+        // （Linux 复刻 Sounds.h:71），只有枯萎的花声。我们这里也要跳过，
+        // 否则爆炸三段与花朵声叠成 4 条一起响（音效审计 P1，2026-11-01）。
+        if (this.atlas.gameStyle !== GameStyle.Flowers) {
+          SoundPlayer.play(Sound.BOMB_START);
+        }
       } else if (wasReady) {
         // 第一下：原版播 firstPaint（不是 tileSingle）
         SoundPlayer.play(Sound.FIRST_PAINT);
@@ -938,10 +976,16 @@ export class GameController {
       } else {
         SoundPlayer.play(Sound.TILE_SINGLE);
       }
-    } else if (!e.cellAt(r, c).revealed && e.cellAt(r, c).mark !== Mark.Flag) {
+    } else if (e.gameState === GameState.Playing &&
+      !e.cellAt(r, c).revealed && e.cellAt(r, c).mark !== Mark.Flag) {
+      // 只有**还在玩**的时候才响「非法操作」音。
+      // 坑（音效审计 P2，2026-11-01）：结束框点「换个难度(D)」把框关掉后棋局仍是终局，
+      // 这时再点棋盘会走进这个分支 → 每点一声 invalidMove；原版终局后棋盘是锁住的。
       SoundPlayer.play(Sound.INVALID_MOVE);
     }
     if (wasReady && e.gameState === GameState.Playing) {
+      // 原版：第一下就把计数器**置 1**，然后每秒 +1（SPEC §3.7）——不是先显示 00。
+      this.seconds = 1;
       this.startTimer();
     }
     // 洪泛涟漪：展开格数够多才涟漪（原版少于 6 格直接出现）
@@ -973,6 +1017,11 @@ export class GameController {
     e.chord(r, c);
     if (e.revealedCount > before) {
       SoundPlayer.play(Sound.TILE_MULTIPLE);
+    } else if (e.gameState === GameState.Playing) {
+      // 和弦不成（周围旗数 ≠ 数字）→ 原版播 invalidMove。
+      // 参考：Linux 复刻 BoardWidget.cpp:840、Lmy 克隆 Minesweeper.cpp:1357-1359。
+      // 以前这里什么都不响，等于 invalidMove.wav 在正常玩法里永远不响（音效审计 P1）。
+      SoundPlayer.play(Sound.INVALID_MOVE);
     }
     this.syncTimerWithState();
     this.notifyGameOver();
@@ -988,8 +1037,12 @@ export class GameController {
     const e = this.engine;
     const r = Math.floor(idx / e.colCount);
     const c = idx - r * e.colCount;
-    e.toggleMark(r, c);
-    SoundPlayer.play(Sound.FLAG);
+    // 引擎在「已翻开的格 / 终局」时会拒绝插旗并返回 false —— 这时**不该**响插旗音。
+    // 以前这里丢了返回值，长按已翻开的格子也会响一声（音效审计 P2，2026-11-01）。
+    const marked: boolean = e.toggleMark(r, c);
+    if (marked) {
+      SoundPlayer.play(Sound.FLAG);
+    }
     this.syncTimerWithState();
     this.draw();
   }
@@ -1030,10 +1083,16 @@ export class GameController {
       SoundPlayer.play(Sound.GAME_LOSE);
     }
     if (!won) {
-      // 判负：先播完爆炸动画，再弹对话框（原版就是先炸后弹）
-      const cell = this.explodedCellIndex();
-      if (cell >= 0) {
-        Anim.startTrip(cell);
+      // 判负：先播完爆炸动画，再弹对话框（原版就是先炸后弹）。
+      // 原版是**冲击波级联**：踩中的那颗先炸，其余没插旗的雷依次炸。
+      const booms = this.buildBoomList();
+      if (booms.length > 0) {
+        Anim.startTrip(booms);
+        // 爆炸中音/结束音在这里起（不是点下去那一刻）：级联开始后才知道整条要炸多久，
+        // 结束音的时机要跟着级联长度走。花园玩法不播爆炸三段（见 tap 里的说明）。
+        if (this.atlas.gameStyle !== GameStyle.Flowers) {
+          this.playBombTail();
+        }
         this.pendingGameOver = true;
         this.startAnimTimer();
         return;
@@ -1062,22 +1121,25 @@ export class GameController {
     const e = this.engine;
     const cells: number[] = [];
     const times: number[] = [];
-    // 条的高度必须与画的时候一致（Anim.scanBarRect 按原版保持长宽比算），
-    // 否则光束的起跳时刻和条实际扫到那一行的时刻对不上。
-    const barH = this.scanBarHeight();
-    const boardBottom = this.sweepBottom();
-    const boardH = Math.max(1, boardBottom - this.boardY);
     for (let r = 0; r < e.rowCount; r++) {
       for (let c = 0; c < e.colCount; c++) {
         if (!e.cellAt(r, c).mine) {
           continue;
         }
-        // 扫描条的上沿从 boardBottom - barH 起步往上走，
-        // 扫到这一行（行顶 y = boardY + r*tile）时已走过的比例。
-        const mineY = this.boardY + r * this.tile;
-        const crossed = (boardBottom - barH - mineY) / boardH;
+        // 每颗雷的拆雷光束在扫描条扫到**它那一行**时起跳，
+        // 起跳时刻**按行号均匀分配**：
+        //     start = SWEEP_MS * (rows - r) / (rows + 1)
+        // 依据：linux-minesweeper/src/ui/BoardWidget.cpp:244
+        //   `const int start = kScanTicks * (rows - r) / (rows + 1);`
+        //
+        // 以前我们算的是「扫描条的上沿扫到该行上沿的时刻」，
+        // 用的是扫描条的**真实高度**（棋盘宽 × 62/275，9×9 时约 2.03 格、
+        // 30×24 时约 5.41 格）。条那么高，一开始就盖住了最底下几行，
+        // 于是**最底几行的光束会在 0 ms 同时开火**（9×9 底两行、30×24 底六行），
+        // 看上去不对。改成按行号分配之后，每行的光束依次开火。
+        const startMs = Math.round(Anim.SWEEP_MS * (e.rowCount - r) / (e.rowCount + 1));
         cells.push(r * e.colCount + c);
-        times.push(Math.max(0, Math.min(1, crossed)) * Anim.SWEEP_MS);
+        times.push(startMs);
       }
     }
     Anim.startWin(cells, times);
@@ -1085,17 +1147,56 @@ export class GameController {
     this.startAnimTimer();
   }
 
-  /** 找出踩中的那颗雷的格索引（没有就 -1） */
-  private explodedCellIndex(): number {
+  /**
+   * 判负时的**爆炸级联表**（原版 Win7 的冲击波）。
+   *
+   * 原版：踩中的那颗先炸（起跳 0），其余**没插旗**的雷按冲击波环到达的时刻
+   * 依次炸 —— 离踩中的那颗越远，炸得越晚，中间那段空白就是延迟。
+   *
+   * 依据：linux-minesweeper/src/ui/BoardWidget.cpp:167-206（startExplosion）
+   *   - 踩中的那颗：start = 0
+   *   - 其余的：start = max(1, round(dist * kRingStagger)) tick（dist 是欧氏格距）
+   *   - 插了旗的雷不炸（`cell.mark == Mark::Flag` 直接跳过）
+   *
+   * 我们这边「没插旗的雷」正好就是引擎判负时翻开的那些
+   * （MinesweeperEngine.lose()：只有 cell.mine && cell.mark !== Mark.Flag 才 revealed）。
+   */
+  private buildBoomList(): Boom[] {
     const e = this.engine;
-    for (let r = 0; r < e.rowCount; r++) {
-      for (let c = 0; c < e.colCount; c++) {
+    let centreR = -1;
+    let centreC = -1;
+    for (let r = 0; r < e.rowCount && centreR < 0; r++) {
+      for (let c = 0; c < e.colCount && centreR < 0; c++) {
         if (e.cellAt(r, c).exploded) {
-          return r * e.colCount + c;
+          centreR = r;
+          centreC = c;
         }
       }
     }
-    return -1;
+    if (centreR < 0) {
+      return [];
+    }
+    const booms: Boom[] = [];
+    for (let r = 0; r < e.rowCount; r++) {
+      for (let c = 0; c < e.colCount; c++) {
+        const cell = e.cellAt(r, c);
+        if (!cell.mine || cell.mark === Mark.Flag) {
+          continue;                        // 没插旗的雷才会炸
+        }
+        const idx = r * e.colCount + c;
+        if (cell.exploded) {
+          booms.push({ cell: idx, startMs: 0 });
+          continue;
+        }
+        const dr = r - centreR;
+        const dc = c - centreC;
+        const dist = Math.sqrt(dr * dr + dc * dc);
+        booms.push({ cell: idx, startMs: Anim.boomStartMs(dist) });
+      }
+    }
+    // 按起爆时刻排序：先炸的先画，后炸的盖在上面
+    booms.sort((a: Boom, b: Boom): number => a.startMs - b.startMs);
+    return booms;
   }
 
   /**
@@ -1112,10 +1213,16 @@ export class GameController {
     this.bombTimer1 = setTimeout(() => {
       this.bombTimer1 = -1;
       SoundPlayer.play(Sound.BOMB_RUN);
+      // 结束音要等**整条级联**炸完。
+      // 级联时长随棋盘变大（9×9 十雷 1840ms、30×24 能到 6s+），以前是写死的 3949ms，
+      // 大棋盘上会「声音先结束、动画还在炸」（动画审计 D2 的附带问题）。
+      // 同时把爆炸中音停掉再放结束音，否则两段会叠着响（原版是先停循环再放结束音）。
+      const endDelay: number = Math.max(3949, Anim.tripEndMs());
       this.bombTimer2 = setTimeout(() => {
         this.bombTimer2 = -1;
+        SoundPlayer.stop(Sound.BOMB_RUN);
         SoundPlayer.play(Sound.BOMB_END);
-      }, 3949);
+      }, endDelay);
     }, 575);
   }
 
