@@ -308,7 +308,12 @@ export class GameController {
     console.info('[GameController] 布局 画布=' + this.canvasW + 'x' + this.canvasH + 'px 密度换算=' +
       this.pxScale.toFixed(4) + ' 适配档n=' + fit + ' 当前档n=' + this.scaleIndex +
       ' unit=' + this.unit + ' 格边=' + this.tile + 'px 棋盘原点=(' + this.boardX + ',' + this.boardY +
-      ') HUD=' + (this.hudActive ? 1 : 0) + ' 状态条上沿=' + this.stripTop + 'px');
+      ') HUD=' + (this.hudActive ? 1 : 0) + ' 状态条上沿=' + this.stripTop + 'px' +
+      // 盘面规格也打进日志：跑测器要断言「真的开出了 24×30 这一局」，
+      // 而格边/原点是**随设备变**的（两个模拟器的画布尺寸不同），写死就会在别的设备上假失败。
+      // 2026-11-01（Codex 复审 P2）加。
+      ' 盘面=' + this.engine.rowCount + 'x' + this.engine.colCount +
+      ' 雷=' + this.engine.mineCount);
   }
 
   /**
