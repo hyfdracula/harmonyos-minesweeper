@@ -279,13 +279,23 @@ export class SevenSeg {
     return out;
   }
 
-  /** 画一段（内部用）：参考像素坐标 → 设备像素 → vp */
+  /**
+   * 画一段（内部用）：参考像素坐标 → 设备像素 → vp。
+   *
+   * **每条边都取整到整数设备像素**（2026-11-01 用户反馈「秒数和雷数字体不太清楚」）。
+   * 原因：段宽是 2~3 个参考像素，乘上缩放系数（unit）之后在**分数密度**的屏幕上
+   * （折叠屏 2.75 / 3.5 倍密度）常常是小数，段的边落在半个像素上 →
+   * 画布会做抗锯齿 → 数码管看起来发虚、发糊。
+   *
+   * 取整的是**边**不是宽：相邻两段共用一条边，两边各自取整会得到同一个值，
+   * 所以接缝仍然是严丝合缝的（不会多出绿缝，也不会叠出白块）。
+   */
   static rect(ctx: CanvasRenderingContext2D, devX0: number, devY0: number,
     refX: number, refY: number, refW: number, refH: number, sDev: number, pxScale: number): void {
-    const dx: number = devX0 + refX * sDev;
-    const dy: number = devY0 + refY * sDev;
-    const dw: number = refW * sDev;
-    const dh: number = refH * sDev;
-    ctx.fillRect(dx * pxScale, dy * pxScale, dw * pxScale, dh * pxScale);
+    const x0: number = Math.round(devX0 + refX * sDev);
+    const y0: number = Math.round(devY0 + refY * sDev);
+    const x1: number = Math.round(devX0 + (refX + refW) * sDev);
+    const y1: number = Math.round(devY0 + (refY + refH) * sDev);
+    ctx.fillRect(x0 * pxScale, y0 * pxScale, (x1 - x0) * pxScale, (y1 - y0) * pxScale);
   }
 }

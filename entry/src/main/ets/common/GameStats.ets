@@ -17,6 +17,33 @@ import { common } from '@kit.AbilityKit';
 
 const STORE_NAME: string = 'saolei_stats';
 
+/**
+ * 一个难度档的「四项纪录」。
+ *
+ * 对应 Win7 原版「最佳成绩」表里的四行（逐条的出处见
+ * docs/DIALOG-PIXEL-DIFF-3.md §1）：
+ *   最快用时   —— 获胜局里最短的一次用时（秒）
+ *   最快百分比 —— 历史上出现过的最高胜率
+ *   最慢百分比 —— 历史上出现过的最低胜率
+ *   最慢用时   —— 获胜局里最长的一次用时（秒）
+ *
+ * 百分比的分母 = **该难度已玩的局数**（不是全局局数）：
+ * Lmy 克隆 io.h:268-271 就是 `valueCount[2] = (int)(winCount/gameCount*100)`，
+ * gameCount/winCount 都取自同一个难度档的分节。
+ */
+export interface LevelRecord {
+  /** 该难度已玩局数（百分比的分母） */
+  played: number;
+  /** 该难度获胜局数（百分比的分子） */
+  won: number;
+  /** 最慢用时（秒，只统计获胜局）；-1 = 没有纪录 */
+  slowest: number;
+  /** 最快百分比（保留一位小数）；-1 = 没有纪录 */
+  bestPercent: number;
+  /** 最慢百分比（保留一位小数）；-1 = 没有纪录 */
+  worstPercent: number;
+}
+
 export class GameStats {
   /** 已玩总局数 */
   static played: number = 0;
@@ -36,6 +63,8 @@ export class GameStats {
   private static bestSeconds: Map<string, number> = new Map();
   /** 各难度最快纪录的日期文本 */
   private static bestDate: Map<string, string> = new Map();
+  /** 各难度的其余三项纪录（局数/胜局、最慢用时、最快/最慢百分比） */
+  private static levelRecords: Map<string, LevelRecord> = new Map();
 
   /**
    * 外观设置（**原版重启后是保留的** ✓）。
@@ -67,6 +96,17 @@ export class GameStats {
         }
         if (d.length > 0) {
           GameStats.bestDate.set(level, d);
+        }
+        // 四项纪录（新增键；老存档里没有就是「没有纪录」，不影响老数据）
+        const lp: number = Number(await GameStats.store.get('lvPlayed_' + level, 0));
+        const lw: number = Number(await GameStats.store.get('lvWon_' + level, 0));
+        const ls: number = Number(await GameStats.store.get('lvSlowest_' + level, -1));
+        const lb: number = Number(await GameStats.store.get('lvBestPct_' + level, -1));
+        const lwst: number = Number(await GameStats.store.get('lvWorstPct_' + level, -1));
+        if (lp > 0 || lw > 0 || ls >= 0 || lb >= 0 || lwst >= 0) {
+          GameStats.levelRecords.set(level, {
+            played: lp, won: lw, slowest: ls, bestPercent: lb, worstPercent: lwst
+          });
         }
       }
     } catch (err) {
@@ -123,7 +163,46 @@ export class GameStats {
         GameStats.maxLoseStreak = GameStats.currentLoseStreak;
       }
     }
+    // 各难度的四项纪录（Win7 原版「最佳成绩」表的四行）
+    GameStats.updateLevelRecord(level, won, seconds);
     await GameStats.save();
+  }
+
+  /**
+   * 更新某个难度的四项纪录。
+   *
+   * - 最快用时：获胜局里最短的一次（与 bestSeconds 同一份数据，不重复存）
+   * - 最慢用时：获胜局里最长的一次（输的局没有可比性，不计入）
+   * - 最快/最慢百分比：该难度**历史胜率**的最大/最小值，
+   *   胜率 = 获胜局数 / 该难度已玩局数（分母是这个难度的局数，不是全局局数）
+   */
+  private static updateLevelRecord(level: string, won: boolean, seconds: number): void {
+    const rec: LevelRecord = GameStats.levelRecord(level);
+    rec.played += 1;
+    if (won) {
+      rec.won += 1;
+      if (rec.slowest < 0 || seconds > rec.slowest) {
+        rec.slowest = seconds;
+      }
+    }
+    // 胜率保留一位小数（Win7 原版显示到整数，这里多留一位，别把 2/3 抹成 67）
+    const rate: number = Math.round((rec.won * 1000) / rec.played) / 10;
+    if (rec.bestPercent < 0 || rate > rec.bestPercent) {
+      rec.bestPercent = rate;
+    }
+    if (rec.worstPercent < 0 || rate < rec.worstPercent) {
+      rec.worstPercent = rate;
+    }
+    GameStats.levelRecords.set(level, rec);
+  }
+
+  /** 指定难度的四项纪录；没有记录时返回一份全空的纪录 */
+  static levelRecord(level: string): LevelRecord {
+    const r: LevelRecord | undefined = GameStats.levelRecords.get(level);
+    if (r !== undefined) {
+      return r;
+    }
+    return { played: 0, won: 0, slowest: -1, bestPercent: -1, worstPercent: -1 };
   }
 
   /**
@@ -140,6 +219,7 @@ export class GameStats {
     GameStats.maxLoseStreak = 0;
     GameStats.bestSeconds.clear();
     GameStats.bestDate.clear();
+    GameStats.levelRecords.clear();
     await GameStats.save();
   }
 
@@ -203,6 +283,16 @@ export class GameStats {
           await store.put('bestDate_' + level, d);
         } else {
           await store.delete('bestDate_' + level);
+        }
+        // 四项纪录（新增键）
+        const rec: LevelRecord = GameStats.levelRecord(level);
+        if (rec.played > 0 || rec.won > 0 || rec.slowest >= 0 ||
+          rec.bestPercent >= 0 || rec.worstPercent >= 0) {
+          await store.put('lvPlayed_' + level, rec.played);
+          await store.put('lvWon_' + level, rec.won);
+          await store.put('lvSlowest_' + level, rec.slowest);
+          await store.put('lvBestPct_' + level, rec.bestPercent);
+          await store.put('lvWorstPct_' + level, rec.worstPercent);
         }
       }
       await store.flush();

@@ -959,12 +959,13 @@ export class GameController {
         // 参考实现：爆炸动画 25 帧 × 23ms = 575ms，动画结束后循环播爆炸中音，最后播结束音。
         // 本项目动画 8 帧 × 70ms = 560ms，与原版动画时长基本一致。
         //
+        // **爆炸起始音不在这里播**：判负有两条路（点开踩到的雷 / 和弦把邻雷翻出来），
+        // 起始音统一放在 notifyGameOver() 的判负分支里起，两条路都有，
+        // 也只播一次（Codex 复审 P2，2026-11-01）。
+        //
         // 花园（花朵）玩法**不播爆炸三段**：原版的 mineTripped() 在花园模式下直接返回
         // （Linux 复刻 Sounds.h:71），只有枯萎的花声。我们这里也要跳过，
         // 否则爆炸三段与花朵声叠成 4 条一起响（音效审计 P1，2026-11-01）。
-        if (this.atlas.gameStyle !== GameStyle.Flowers) {
-          SoundPlayer.play(Sound.BOMB_START);
-        }
       } else if (wasReady) {
         // 第一下：原版播 firstPaint（不是 tileSingle）
         SoundPlayer.play(Sound.FIRST_PAINT);
@@ -1088,9 +1089,13 @@ export class GameController {
       const booms = this.buildBoomList();
       if (booms.length > 0) {
         Anim.startTrip(booms);
-        // 爆炸中音/结束音在这里起（不是点下去那一刻）：级联开始后才知道整条要炸多久，
-        // 结束音的时机要跟着级联长度走。花园玩法不播爆炸三段（见 tap 里的说明）。
+        // 爆炸三段（开始 / 中 / 结束）在这里起 —— **判负只有这一条路**
+        // （点开踩到的雷与和弦翻出邻雷，最后都走 notifyGameOver），
+        // 所以起始音放在这里，两条路都响、而且只响一次
+        // （Codex 复审 P2，2026-11-01：和弦触发的判负原来一声不响）。
+        // 花园玩法不播爆炸三段（见 tap 里的说明）。
         if (this.atlas.gameStyle !== GameStyle.Flowers) {
+          SoundPlayer.play(Sound.BOMB_START);
           this.playBombTail();
         }
         this.pendingGameOver = true;
@@ -1108,6 +1113,35 @@ export class GameController {
     if (cb !== null) {
       cb(won);
     }
+  }
+
+  /**
+   * 某一行雷的**拆雷光束起跳时刻**（毫秒，从扫描开始算起）。
+   *
+   * - 棋盘完整可见时：按行号均匀分配
+   *   `SWEEP_MS * (rows - r) / (rows + 1)`
+   *   （依据 linux-minesweeper/src/ui/BoardWidget.cpp:244 的
+   *   `const int start = kScanTicks * (rows - r) / (rows + 1);`）
+   * - 棋盘被状态条压住一截时（HUD 模式）：扫描条实际只从**看得见的下沿**扫起，
+   *   所以按看得见的那一段几何算「条的上沿什么时候到这一行」，
+   *   保证光束与扫描条**始终同步**（Codex 复审 P2，2026-11-01）。
+   */
+  private beamStartMs(r: number): number {
+    const e = this.engine;
+    const rows: number = e.rowCount;
+    const fullBottom: number = this.boardY + rows * this.tile;
+    const clipped: boolean = this.hudActive && fullBottom > this.stripTop;
+    if (!clipped) {
+      return Math.round(Anim.SWEEP_MS * (rows - r) / (rows + 1));
+    }
+    const visBottom: number = this.sweepBottom();
+    const rowTop: number = this.boardY + r * this.tile;
+    if (rowTop >= visBottom) {
+      // 这一行整个被状态条压住，看不见 —— 光束在画面外，起跳时刻无所谓。
+      return 0;
+    }
+    const span: number = Math.max(1, visBottom - this.boardY);
+    return Math.round(Anim.SWEEP_MS * (visBottom - rowTop) / span);
   }
 
   /**
@@ -1137,7 +1171,11 @@ export class GameController {
         // 30×24 时约 5.41 格）。条那么高，一开始就盖住了最底下几行，
         // 于是**最底几行的光束会在 0 ms 同时开火**（9×9 底两行、30×24 底六行），
         // 看上去不对。改成按行号分配之后，每行的光束依次开火。
-        const startMs = Math.round(Anim.SWEEP_MS * (e.rowCount - r) / (e.rowCount + 1));
+        //
+        // HUD 模式（棋盘纵向溢出、状态条钉在画布底边）下，扫描条只扫**看得见**的那一段
+        // （见 sweepBottom()），所以光束的起跳时刻也得按**看得见的那段**算 ——
+        // 否则扫描条早就扫过去了，可见行的光束却还没起跳（Codex 复审 P2，2026-11-01）。
+        const startMs: number = this.beamStartMs(r);
         cells.push(r * e.colCount + c);
         times.push(startMs);
       }
@@ -1208,27 +1246,47 @@ export class GameController {
    *   3) 爆炸中音，**循环**播放，同时其它雷逐个烧红
    *   4) 爆炸结束音
    * 各 wav 实测时长：mineBombStart 1.294s / mineBombRun 3.949s / mineBombEnd 1.951s。
+   *
+   * 两个坑（Codex 复审 P2，2026-11-01）：
+   * - **爆炸中音要续播**：wav 只有 3.949 秒，而大棋盘（30×24）的级联能到 6 秒以上；
+   *   不续播就会「声音停了、动画还在炸」，中间好几秒静音。
+   * - **结束音的时刻从级联开始算**，不是从爆炸中音起算（否则会晚 575ms）。
    */
   private playBombTail(): void {
+    // 整条级联要炸多久（从级联开始算起；Anim.startTrip() 刚跑过，值是准的）
+    const totalMs: number = Math.max(0, Anim.tripEndMs());
     this.bombTimer1 = setTimeout(() => {
       this.bombTimer1 = -1;
       SoundPlayer.play(Sound.BOMB_RUN);
-      // 结束音要等**整条级联**炸完。
-      // 级联时长随棋盘变大（9×9 十雷 1840ms、30×24 能到 6s+），以前是写死的 3949ms，
-      // 大棋盘上会「声音先结束、动画还在炸」（动画审计 D2 的附带问题）。
-      // 同时把爆炸中音停掉再放结束音，否则两段会叠着响（原版是先停循环再放结束音）。
-      const endDelay: number = Math.max(3949, Anim.tripEndMs());
+      // 续播：同名音效重触发会打断前一次（SoundPlayer.play 的语义与原版
+      // PlaySound(SND_ASYNC) 一致），所以循环调用就得到「连续的爆炸中音」。
+      this.bombTimer3 = setInterval(() => {
+        SoundPlayer.play(Sound.BOMB_RUN);
+      }, 3700);
+      // 结束音在**整条级联炸完**时响，时刻从级联开始算起。
+      const delay: number = Math.max(0, totalMs - 575);
       this.bombTimer2 = setTimeout(() => {
         this.bombTimer2 = -1;
+        this.stopBombRunLoop();
         SoundPlayer.stop(Sound.BOMB_RUN);
         SoundPlayer.play(Sound.BOMB_END);
-      }, endDelay);
+      }, delay);
     }, 575);
   }
 
-  /** 爆炸音延时的两个定时器（换局时必须撤掉，否则上一局的爆炸声会串到新局） */
+  /** 爆炸音延时的三个定时器（换局时必须撤掉，否则上一局的爆炸声会串到新局） */
   private bombTimer1: number = -1;
   private bombTimer2: number = -1;
+  /** 爆炸中音的续播定时器 */
+  private bombTimer3: number = -1;
+
+  /** 停掉「爆炸中音」的续播 */
+  private stopBombRunLoop(): void {
+    if (this.bombTimer3 !== -1) {
+      clearInterval(this.bombTimer3);
+      this.bombTimer3 = -1;
+    }
+  }
 
   /** 撤掉还没播完的爆炸音 */
   private stopBombTail(): void {
@@ -1240,6 +1298,7 @@ export class GameController {
       clearTimeout(this.bombTimer2);
       this.bombTimer2 = -1;
     }
+    this.stopBombRunLoop();
   }
 
   private startAnimTimer(): void {
@@ -1700,10 +1759,13 @@ export class GameController {
           entries: [
             { id: 'new', label: '新建', accelerator: 'F2' },
             { id: 'sep1', label: '', separator: true },
-            { id: 'beginner', label: '初级', checked: this.difficulty === Difficulty.Beginner },
-            { id: 'intermediate', label: '中级', checked: this.difficulty === Difficulty.Intermediate },
-            { id: 'expert', label: '高级', checked: this.difficulty === Difficulty.Expert },
-            { id: 'custom', label: '自定义' },
+            { id: 'beginner', label: '初级', checked: !this.customGame && this.difficulty === Difficulty.Beginner },
+            { id: 'intermediate', label: '中级', checked: !this.customGame && this.difficulty === Difficulty.Intermediate },
+            { id: 'expert', label: '高级', checked: !this.customGame && this.difficulty === Difficulty.Expert },
+            // 自定义局：原版把「自定义」这一项打勾、三档预设全部取消
+            // （原版用 Difficulty=3 表示自定义，见 Lmy 克隆 resource.h:32 与
+            //  windowing.c:885-887 的 InitializeCheckedMenuItems）。
+            { id: 'custom', label: '自定义', checked: this.customGame },
             { id: 'marks', label: '标记(?)', checked: this.questionMarks },
             { id: 'sep2', label: '', separator: true },
             { id: 'sound', label: '声音', checked: SoundPlayer.isEnabled },

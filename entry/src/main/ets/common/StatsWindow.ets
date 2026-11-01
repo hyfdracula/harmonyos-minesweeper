@@ -15,7 +15,8 @@
  *
  * 窗口版式（全部为 information.jpg 实测值）：
  *   左栏   难度列表框（白底 sunken 边框），初级/中级/高级，首项蓝底选中
- *   中栏   「最佳时间」group box：左边最快用时（秒），右边达成日期
+ *   中栏   「最快纪录」group box：Win7 原版「最佳成绩」表的四行
+ *           （最快用时 / 最快百分比 / 最慢百分比 / 最慢用时，取左栏选中那一档）
  *   右栏   已玩游戏 / 已胜游戏 / 获胜率 / 最多连胜 / 最多连败 / 当前连局
  *   底部   关闭(C)（默认按钮，蓝框）/ 重置(R)
  *
@@ -27,6 +28,8 @@
  * 坑：CanvasRenderingContext2D 是 ArkTS 全局类型，不能 import；
  *      createLinearGradient 的返回值类型名在不同 SDK 版本下不稳定，故不写显式类型。
  */
+
+import { GameStats, LevelRecord } from './GameStats';
 
 /** 一个难度的最快纪录 */
 export interface StatsLevel {
@@ -163,13 +166,13 @@ const LIST_ITEM_DY: number = 13;
 /** 列表框最多显示几条（(80 - 3) / 13） */
 const LIST_MAX_ITEMS: number = 6;
 
-// ---- 中栏：「最佳时间」group box ----
+// ---- 中栏：「最快纪录」group box ----
 /** group box 外框 x=193..429 / y=49..155 */
 const GB_X: number = 193;
 const GB_Y: number = 49;
 const GB_W: number = 237;
 const GB_H: number = 107;
-/** 标题「最佳时间」墨迹 x=202..248 / y=44..55 */
+/** 标题「最快纪录」墨迹 x=202..248 / y=44..55 */
 const GB_TITLE_X: number = 202;
 const GB_TITLE_Y: number = 44;
 /** 标题在边框上留的缺口 x=200..251 */
@@ -181,6 +184,18 @@ const GB_DATE_X: number = 251;
 const GB_ROW_Y: number = 66;
 /** 没有纪录时显示的占位 */
 const GB_NO_RECORD: string = '---';
+
+/**
+ * Win7 原版「最佳成绩」表的四行（当前选中那一档难度）：
+ * 最快用时 / 最快百分比 / 最慢百分比 / 最慢用时。
+ *
+ * 版式：标签左对齐（x=202），数值右对齐（右缘 x=420），行距 22。
+ * 百分比保留一位小数（2/3 局是 66.7%，别抹成 67）。
+ */
+const GB4_LABEL_X: number = 202;
+const GB4_VALUE_RIGHT: number = 420;
+const GB4_Y0: number = 66;
+const GB4_DY: number = 22;
 
 // ---- 右栏：统计数字 ----
 /** 右栏文字左缘（墨迹 x=443） */
@@ -217,6 +232,16 @@ export class StatsWindowPainter {
       return 0;
     }
     return Math.round((data.won * 100) / data.played);
+  }
+
+  /**
+   * 百分比文本（保留一位小数）。
+   *
+   * 原版把胜率写成整数（Lmy 克隆 io.h:271 是 `(int)(win/played*100)`），
+   * 但 2/3 这种除不尽的会被抹掉 0.7，四项纪录里用一位小数更准。
+   */
+  static percentText(v: number): string {
+    return v.toFixed(1) + '%';
   }
 
   /** 重置按钮的矩形（参考像素）[x, y, w, h]，draw 与 hitReset 共用 */
@@ -408,18 +433,43 @@ export class StatsWindowPainter {
     ctx.fillStyle = C_CLIENT;
     ctx.fillRect(gx + (GB_TITLE_GAP_X - GB_X) * sVp, gy - 1 * sVp,
       GB_TITLE_GAP_W * sVp, 3 * sVp);
-    // 标题「最佳时间」
+    // 标题「最快纪录」
     ctx.fillStyle = C_TEXT;
     ctx.font = `${BTN_FONT * sDev}px sans-serif`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText('最佳时间', oxVp + GB_TITLE_X * sVp,
+    ctx.fillText('最快纪录', oxVp + GB_TITLE_X * sVp,
       oyVp + (GB_TITLE_Y + TEXT_INK_DY) * sVp);
-    // 数据行：最快用时 + 日期
-    const timeText: string = data.bestSeconds >= 0 ? data.bestSeconds.toString() : GB_NO_RECORD;
-    ctx.fillStyle = C_TEXT;
-    ctx.fillText(timeText, oxVp + GB_TIME_X * sVp, oyVp + (GB_ROW_Y + TEXT_INK_DY) * sVp);
-    ctx.fillText(data.bestDate, oxVp + GB_DATE_X * sVp, oyVp + (GB_ROW_Y + TEXT_INK_DY) * sVp);
+
+    // 数据行：Win7 原版「最佳成绩」表的四行（取左栏当前选中的那一档难度）
+    //
+    // 四项的含义与出处见 docs/DIALOG-PIXEL-DIFF-3.md §1：
+    //   最快用时   获胜局里最短的一次（秒）
+    //   最快百分比 历史胜率的最大值（分母 = 该难度已玩局数）
+    //   最慢百分比 历史胜率的最小值
+    //   最慢用时   获胜局里最长的一次（秒）
+    const selIdx: number = Math.max(0, Math.min(data.perLevel.length - 1, data.selected));
+    const levelName: string = data.perLevel.length > 0 ? data.perLevel[selIdx].level : '';
+    const rec: LevelRecord = GameStats.levelRecord(levelName);
+    const fastText: string = data.bestSeconds >= 0 ? data.bestSeconds.toString() + '秒' : GB_NO_RECORD;
+    const slowText: string = rec.slowest >= 0 ? rec.slowest.toString() + '秒' : GB_NO_RECORD;
+    const bestPctText: string =
+      rec.bestPercent >= 0 ? StatsWindowPainter.percentText(rec.bestPercent) : GB_NO_RECORD;
+    const worstPctText: string =
+      rec.worstPercent >= 0 ? StatsWindowPainter.percentText(rec.worstPercent) : GB_NO_RECORD;
+    const fourLabels: string[] = ['最快用时', '最快百分比', '最慢百分比', '最慢用时'];
+    const fourValues: string[] = [fastText, bestPctText, worstPctText, slowText];
+    for (let i: number = 0; i < fourLabels.length; i++) {
+      const ry: number = GB4_Y0 + GB4_DY * i;
+      ctx.fillStyle = C_TEXT;
+      ctx.textAlign = 'left';
+      ctx.fillText(fourLabels[i] + ': ', oxVp + GB4_LABEL_X * sVp,
+        oyVp + (ry + TEXT_INK_DY) * sVp);
+      ctx.textAlign = 'right';
+      ctx.fillText(fourValues[i], oxVp + GB4_VALUE_RIGHT * sVp,
+        oyVp + (ry + TEXT_INK_DY) * sVp);
+    }
+    ctx.textAlign = 'left';
 
     // ---- 右栏：统计数字 ----
     const pct: number = StatsWindowPainter.percent(data);
