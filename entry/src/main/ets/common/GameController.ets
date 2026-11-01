@@ -1406,6 +1406,11 @@ export class GameController {
     } else {
       this.dialog = WinDialogPainter.loseSpec(this.seconds, GameStats.played, GameStats.won, GameStats.percent);
     }
+    // 告诉跑测器弹的是**哪一个**框（2026-11-01）。
+    // 跑测器的「赢一局」脚本偶尔会踩到雷、弹出的是失败框；它自己分不出来，
+    // 就继续按胜利框的坐标点按钮 —— 点空、框不关，用例报成「按钮坏了」，
+    // 锅全甩给被测代码。这条日志是应用自己说的，不靠像素猜。
+    console.info('[Dialog] 打开 ' + (won ? '胜利' : '失败'));
   }
 
   /** 对话框当前的绘制参数（缩放与位置） */
