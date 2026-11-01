@@ -47,6 +47,20 @@ export class Anim {
   /** 爆炸帧的绘制偏移（相对格子左上角，逻辑坐标） */
   static readonly EXPLODE_OFFSET: number[] = [-18, -18];
 
+  /**
+   * 爆炸动画的**取证用慢放倍率**。
+   *
+   * 为什么需要它：设备端一次截图要 497ms、一次点击要 485ms，
+   * 而原版的爆炸只有 1 秒（23 帧）—— 快门比动画窗口还慢，
+   * 一次连拍最多压住 1 帧，23 帧根本抓不齐。
+   * 慢放 8 倍后爆炸持续 8 秒，快门就能连着抓好几帧，用来**证明帧号是递增的**。
+   *
+   * **发布包必须是 1**（原版的 1 秒 / 23 帧）。
+   * 取证用的那次慢放（= 8）只存在于本机取证期间，证据见
+   * docs\ANIM-FRAMES.md；提交时这个常量是 1。
+   */
+  static readonly EXPLODE_SLOWMO: number = 1;
+
   static tripActive: boolean = false;
   static tripFrame: number = 0;
   static tripCell: number = -1;
@@ -138,8 +152,9 @@ export class Anim {
     let more = false;
     if (Anim.tripActive) {
       // 爆炸按**时间**推进（原来按帧计数，实际只跑了 690ms）
+      const frameMs = Anim.EXPLODE_FRAME_MS * Anim.EXPLODE_SLOWMO;
       Anim.tripElapsed += dtMs;
-      const total = Anim.EXPLODE_FRAME_MS * Anim.EXPLODE_FRAMES;
+      const total = frameMs * Anim.EXPLODE_FRAMES;
       if (Anim.tripElapsed >= total) {
         Anim.tripActive = false;
         Anim.tripFrame = 0;
@@ -147,7 +162,7 @@ export class Anim {
         Anim.tripCell = -1;
       } else {
         Anim.tripFrame = Math.min(Anim.EXPLODE_FRAMES - 1,
-                                  Math.floor(Anim.tripElapsed / Anim.EXPLODE_FRAME_MS));
+                                  Math.floor(Anim.tripElapsed / frameMs));
         more = true;
       }
     }
