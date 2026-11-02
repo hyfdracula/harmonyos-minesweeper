@@ -1,0 +1,12 @@
+The density handling can mis-scale drawing and input, and the added Ability method does not provide the intended window-change notification. `git diff --check` passed; no device runtime test was run.
+
+Full review comments:
+
+- [P1] Keep canvas width in its documented vp units — C:\Users\19161\saolei\entry\src\main\ets\components\MinefieldCanvas.ets:137-140
+  When `onAreaChange` supplies a vp width, the existing `onReady` path identifies `context.width` as vp too. Their ratio is therefore about `1`, not the display density. On a device with density above `1`, this changes `attach()` to use a smaller canvas and shifts drawing and touch hit tests. Obtain density from a source that actually reports device pixels.
+
+- [P1] Register a supported window or configuration callback — C:\Users\19161\saolei\entry\src\main\ets\entryability\EntryAbility.ets:61-61
+  On a fold or display change, UIAbility does not invoke `onWindowStageChange`; this method is not a registered listener or a UIAbility lifecycle callback. Consequently its log and `onWindowStageChanged()` call never run, leaving the intended window-level relayout dependent entirely on canvas area changes. Use a supported configuration or window event hook.
+
+- [P2] Clear the pixel-fallback flag when area dimensions arrive — C:\Users\19161\saolei\entry\src\main\ets\components\MinefieldCanvas.ets:188-192
+  If `onReady` runs before `onAreaChange`, it sets `areaInPx` to `true`. The later area callback replaces `areaW` and `areaH` with vp dimensions but never clears that flag, so `refreshDensity()` permanently forces density to `1`. The resulting layout and touch coordinates remain wrong even after the component reports its size.

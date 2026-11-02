@@ -1,0 +1,12 @@
+The new asynchronous density lookup can reattach an obsolete canvas, silently retain an incorrect fallback density, and miss display-density changes without a canvas area event. These are observable rendering and input regressions; no device runtime test was performed.
+
+Full review comments:
+
+- [P1] Cancel density callbacks when the canvas disappears — C:\Users\19161\saolei\entry\src\main\ets\components\MinefieldCanvas.ets:159-162
+  If a fold or page rebuild destroys this component while `getLastWindow()` is pending, its callback can still call `tryAttach()` after the new canvas has attached. Because `GameSession.controller` is shared, that reattaches the destroyed component's drawing context and can leave the active game drawing into the old canvas. Guard the callback against a disappeared component or cancel the pending lookup.
+
+- [P2] Keep the last valid density when display lookup fails — C:\Users\19161\saolei\entry\src\main\ets\components\MinefieldCanvas.ets:135-139
+  On a non-default display, every area change first replaces a previously correct density with the default display's density. If `getLastWindow()` or `getDisplayByIdSync()` then fails, the rejection is silently ignored and the incorrect density remains until another area change, mis-scaling both drawing and touch coordinates. Preserve the last valid density until the replacement lookup succeeds and report lookup failures.
+
+- [P2] Refresh density when a display change leaves canvas size unchanged — C:\Users\19161\saolei\entry\src\main\ets\entryability\EntryAbility.ets:45-48
+  When the window moves to a display with a different density but the canvas reports no area change, this new window callback only relayouts using the controller's existing density and dimensions. `refreshDensity()` runs only from canvas callbacks, so drawing and hit testing can remain scaled for the previous display indefinitely. The window-level path needs to refresh the active canvas's display density as well.

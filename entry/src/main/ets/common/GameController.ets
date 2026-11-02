@@ -233,6 +233,25 @@ export class GameController {
   }
 
   /**
+   * 窗口级变化（折叠开合 / 内屏↔外屏切换）后重新布局。
+   *
+   * 由 EntryAbility.onWindowStageChange 调用。
+   * 尺寸变化本身由 Canvas 的 onAreaChange → attach → layout() 负责，
+   * 这里补的是「窗口级变化但尺寸还没变」的那一瞬，以及给审计留一条日志依据。
+   *
+   * 幂等：layout() 里「用户手动缩放过就保留档位」那条规则照旧生效，
+   * 所以折叠换屏**不会把用户的缩放档重置回适配档** ✓
+   * （用户原话：折叠换屏时不丢视角）。
+   */
+  onWindowStageChanged(): void {
+    if (this.canvasW <= 0 || this.canvasH <= 0) {
+      return;
+    }
+    this.layout();
+    this.draw();
+  }
+
+  /**
    * 设备像素 → Canvas 坐标（vp）
    *
    * 坑（2026-10-31，LAYOUT-MATRIX 审计 P2-6）：这里原来直接 `px * pxScale`，

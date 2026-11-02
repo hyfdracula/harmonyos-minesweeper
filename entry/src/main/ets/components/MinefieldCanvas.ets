@@ -13,7 +13,7 @@
  *   300ms 内连点同一格 = 和弦（双击已翻开的数字格）
  */
 
-import { display } from '@kit.ArkUI';
+import { display, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { GameController } from '../common/GameController';
 import { GameSession } from '../common/GameSession';
@@ -72,8 +72,20 @@ export struct MinefieldCanvas {
   private pinchMidX: number = 0;
   private pinchMidY: number = 0;
 
+  /** 组件是否已销毁 —— 异步回调回来后要先看这个（Codex 复审 P1） */
+  private disposed: boolean = false;
+  /** 密度查询的序号：只有最新一次查询的结果算数，防止旧结果覆盖新值 */
+  private densitySeq: number = 0;
+  /** 窗口对象（用来挂/摘窗口尺寸变化监听） */
+  private winObj: window.Window | null = null;
+
   aboutToAppear(): void {
+    // 这只是**初值**：默认屏（折叠屏上是内屏）的密度。
+    // 真正的密度要看**窗口所在那块屏**，由 refreshDensity() 异步取回并覆盖
+    // （见 refreshDensity 里的说明）。折叠屏换屏后密度会变。
     this.density = display.getDefaultDisplaySync().densityPixels;
+    this.disposed = false;
+    this.registerWindowListener();
     const abilityCtx = getContext(this) as common.UIAbilityContext;
     // 音效播放器需要 AbilityContext 才能取 rawfile
     SoundPlayer.init(abilityCtx);
@@ -105,11 +117,128 @@ export struct MinefieldCanvas {
   }
 
   aboutToDisappear(): void {
+    this.disposed = true;
+    // 让在途的密度查询作废：它回来时看到 disposed 就不会再碰画布
+    this.densitySeq++;
+    if (this.winObj !== null) {
+      try {
+        this.winObj.off('windowSizeChange');
+      } catch (err) {
+        // 摘不掉也无所谓：组件没了，回调里有 disposed 挡着
+      }
+      this.winObj = null;
+    }
     this.clearLongPress();
     this.controller.dispose();
   }
 
+  /**
+   * 挂上「窗口尺寸变化」监听。
+   *
+   * 为什么画布自己也要挂：Ability 里那个监听只能触发「按控制器现有尺寸重排」，
+   * 而控制器里的密度是**上一块屏**的 —— 窗口挪到密度不同的屏上、画布尺寸又没变时
+   * （Codex 复审 P2），光重排没用，密度得重新取。
+   * 画布自己挂一个，密度和尺寸一起管。
+   */
+  private registerWindowListener(): void {
+    let abilityCtx: common.UIAbilityContext;
+    try {
+      abilityCtx = getContext(this) as common.UIAbilityContext;
+    } catch (err) {
+      return;
+    }
+    window.getLastWindow(abilityCtx).then((win: window.Window) => {
+      if (this.disposed) {
+        return;
+      }
+      this.winObj = win;
+      win.on('windowSizeChange', (size: window.Size) => {
+        if (this.disposed) {
+          return;
+        }
+        // 换屏可能同时改了密度：先重新取密度，再重排
+        this.refreshDensity();
+        this.tryAttach();
+      });
+    }).catch(() => {
+      // 取不到窗口就算了，尺寸变化还有画布自己的 onAreaChange 兜着
+    });
+  }
+
+  /**
+   * 取**当前屏幕**的实际密度。
+   *
+   * 折叠屏内外屏密度不同（Pura X Max 内屏 2.75，外屏不一样），
+   * 折叠换屏后必须重取 —— 否则整套布局（格边、七段数字、计数面板）都按旧密度换算，全错。
+   *
+   * 原来这里只在 aboutToAppear 读一次 `display.getDefaultDisplaySync().densityPixels`，
+   * 有两个问题：
+   *   ① **只读一次** —— 折叠换屏后密度变了也不重取；
+   *   ② 读的是**默认屏**（折叠屏上默认就是内屏），窗口被挪到外屏时拿到的还是内屏密度。
+   *
+   * 现在改成读**窗口所在那块屏**的密度：window.getLastWindow() 是异步的，
+   * 异步取到真正的屏之后，如果密度不一样就重算一次布局。
+   *
+   * 两条纪律（Codex 对抗性复审 2026-11-02 的 P1/P2）：
+   *   ① **不拿默认屏的密度去覆盖已有值** —— 默认屏只是「窗口所在屏」的近似，
+   *      在外屏上它是错的；一次失败的外查询不该把之前正确的密度顶掉。
+   *      所以取不到就**保留上一次的有效密度**，只把错误说出来。
+   *   ② **异步回调回来先看组件还在不在**（disposed）——
+   *      折叠换屏时组件可能被重建销毁，回调再跑 tryAttach() 会把
+   *      **已销毁的画布**重新挂到共享的 controller 上，
+   *      局面就会画到旧画布里去。
+   *
+   * 坑（2026-11-02 踩过）：曾经想用「画布 context.width ÷ 组件 vp 宽」算密度，
+   * 但 ArkUI 的 Canvas 上下文 **width/height 的单位就是 vp**，
+   * 这个比值恒等于 1 —— 画布画成了 707x707（真实是 2210x2416 设备像素）。
+   * ArkUI 的 Canvas 2D 上下文整个坐标系都是 vp，设备像素靠外部换算。
+   */
+  private refreshDensity(): void {
+    if (this.disposed) {
+      return;
+    }
+    const seq: number = ++this.densitySeq;
+    let abilityCtx: common.UIAbilityContext;
+    try {
+      abilityCtx = getContext(this) as common.UIAbilityContext;
+    } catch (err) {
+      return;
+    }
+    window.getLastWindow(abilityCtx).then((win: window.Window) => {
+      // 组件已经没了（或已经有更新的查询在跑）—— 这次结果作废
+      if (this.disposed || seq !== this.densitySeq) {
+        return;
+      }
+      const did: number | undefined = win.getWindowProperties().displayId;
+      if (did === undefined || did === null) {
+        return;
+      }
+      let d: number = 0;
+      try {
+        d = display.getDisplayByIdSync(did).densityPixels;
+      } catch (err) {
+        // 取不到就保留上一次的有效密度（不覆盖），只把错误说出来
+        console.error('[MinefieldCanvas] 取屏 ' + did + ' 的密度失败，保留上一次的有效密度: '
+          + (err as Error).message);
+        return;
+      }
+      if (d > 0 && d !== this.density) {
+        this.density = d;
+        // 密度变了 → 画布尺寸（设备像素）全变了 → 重算布局
+        this.tryAttach();
+      }
+    }).catch((err: Error) => {
+      // 同上：取不到就保留上一次的有效密度
+      console.error('[MinefieldCanvas] 取窗口失败，保留上一次的有效密度: ' + err.message);
+    });
+  }
+
   private tryAttach(): void {
+    // 组件已经没了就别再往共享的 controller 上挂画布了
+    // （否则局面会画到上一块画布里去 —— Codex 复审 P1，2026-11-02）。
+    if (this.disposed) {
+      return;
+    }
     if (!this.ctxReady || this.drawCtx === null || this.areaW <= 0 || this.areaH <= 0) {
       return;
     }
@@ -136,17 +265,23 @@ export struct MinefieldCanvas {
         // 所以这里直接用构造时的那个上下文。
         this.drawCtx = this.context;
         if (this.areaW <= 0 || this.areaH <= 0) {
-          // 兜底：onAreaChange 还没回调时，用画布自己的尺寸（默认单位 vp）
+          // 兜底：onAreaChange 还没回调时，用画布自己的尺寸。
+          // ArkUI 的 Canvas 上下文 width/height 单位就是 **vp**，
+          // 所以这个值可以直接当 vp 用（attach 里再乘密度换成设备像素）。
           this.areaW = this.context.width;
           this.areaH = this.context.height;
         }
         this.ctxReady = true;
+        this.refreshDensity();
         this.tryAttach();
       })
       .onAreaChange((oldArea: Area, newArea: Area) => {
         // 组件尺寸单位是 vp，换算成设备像素由 GameController 处理
         this.areaW = lengthToNumber(newArea.width);
         this.areaH = lengthToNumber(newArea.height);
+        // 折叠换屏时尺寸变了，**密度多半也跟着变**（内屏 2.75 / 外屏不一样），
+        // 所以每次尺寸变化都要重取密度，否则布局会按旧密度算，全错。
+        this.refreshDensity();
         this.tryAttach();
       })
       .onTouch((event: TouchEvent) => {
