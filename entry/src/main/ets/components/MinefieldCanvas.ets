@@ -83,7 +83,14 @@ export struct MinefieldCanvas {
     // 这只是**初值**：默认屏（折叠屏上是内屏）的密度。
     // 真正的密度要看**窗口所在那块屏**，由 refreshDensity() 异步取回并覆盖
     // （见 refreshDensity 里的说明）。折叠屏换屏后密度会变。
-    this.density = display.getDefaultDisplaySync().densityPixels;
+    //
+    // 取失败就沿用字段里的初值 2.625 —— 宁可先用一个大致对的密度起手，
+    // 也不能让整个组件初始化失败（那是一张白屏）。
+    try {
+      this.density = display.getDefaultDisplaySync().densityPixels;
+    } catch (err) {
+      console.error('[MinefieldCanvas] 取默认屏密度失败，沿用初值: ' + (err as Error).message);
+    }
     this.disposed = false;
     this.registerWindowListener();
     const abilityCtx = getContext(this) as common.UIAbilityContext;
