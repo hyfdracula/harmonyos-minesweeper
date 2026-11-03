@@ -34,9 +34,9 @@ export default class EntryAbility extends UIAbility {
     // 方法体里的代码永远不执行（实测日志里也确实没有「窗口级变化」这一行）。
     //
     // 找过一圈才找到对的钩子：
-    //   - `windowStage.on('windowStageChange')` ✗ 不存在（WindowStageEventType 是
+    //   - `windowStage.on('windowStageChange')` 不存在（WindowStageEventType 是
     //     显示/隐藏/焦点的枚举，跟折叠无关）；
-    //   - `window.on('windowSizeChange')` ✓ 就是它 —— 折叠换屏时窗口尺寸必然变，
+    //   - `window.on('windowSizeChange')` 就是它 —— 折叠换屏时窗口尺寸必然变，
     //     回调参数是新的 Size（宽高）。
     //
     // 尺寸变化本身由 Canvas 的 onAreaChange → attach → layout() 负责（那条路实测是通的），
@@ -77,12 +77,12 @@ export default class EntryAbility extends UIAbility {
   /**
    * 窗口级变化（**折叠开合 / 内屏↔外屏切换**）时的重排入口。
    *
-   * 注意：这不是 UIAbility 的生命周期回调（UIAbility 没有 onWindowStageChange ✗，
+   * 注意：这不是 UIAbility 的生命周期回调（UIAbility 没有 onWindowStageChange，
    * 写成同名方法会永远不执行 —— Codex 对抗性复审 P1，2026-11-02）。
-   * 真正的监听在 onWindowStageCreate 里，用 `windowStage.on('windowStageChange')` 注册 ✓。
+   * 真正的监听在 onWindowStageCreate 里，用 `windowStage.on('windowStageChange')` 注册。
    *
    * 幂等：layout() 里「用户手动缩放过就保留档位」那条规则照旧生效，
-   * 所以折叠换屏**不会把用户的缩放档重置回适配档** ✓（用户原话：折叠换屏时不丢视角）。
+   * 所以折叠换屏**不会把用户的缩放档重置回适配档**（用户原话：折叠换屏时不丢视角）。
    */
   onForeground(): void {
     // Ability has brought to foreground

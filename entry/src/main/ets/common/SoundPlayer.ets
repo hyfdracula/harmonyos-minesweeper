@@ -32,7 +32,7 @@ export class Sound {
   /**
    * 花园模式（Win7 的「Flower Garden」玩法）判负的三段音效。
    *
-   * 分档规则来自 linux 复刻：雷数 ≤10 播 Short、≤40 播 Medium、更多播 Long ✓。
+   * 分档规则来自 linux 复刻：雷数 ≤10 播 Short、≤40 播 Medium、更多播 Long。
    */
   static readonly FLOWER_LOSE_SHORT: string = 'flowerLoseShort';
   static readonly FLOWER_LOSE_MEDIUM: string = 'flowerLoseMedium';

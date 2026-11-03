@@ -60,7 +60,7 @@ const THUMB_BOARD_BOX: number = 76;
 /**
  * 「颜色」菜单项的显示文字（2026-10-31 由 **lead 按用户本人的 Win7 拍板**）。
  *
- * 用户原话：他的 Windows 7 扫雷点开「游戏(G)」菜单里**确实有「颜色(C)」这一项** ✓
+ * 用户原话：他的 Windows 7 扫雷点开「游戏(G)」菜单里**确实有「颜色(C)」这一项**（已确认）
  * （这是关于「原版到底有没有这一项」的唯一权威来源——原版 exe 的菜单资源
  * `ID_MENUITEM_COLOR 529` 也指向同一个名字）。
  *
@@ -71,7 +71,7 @@ const THUMB_BOARD_BOX: number = 76;
  *      **Change Appearance**. Make your choices, and then click **OK**."，
  *     以及 AppearanceDialog.h:6 "The Game > Change Appearance dialog, laid out like Windows 7's"。
  *   - refs 里**找不到中文串**（中文只有 Lmy0217 那个 Win32 复刻自己的菜单）。
- *   - 所以中文名取**用户 Win7 上的真名「颜色(C)」** ✓（英文直译「外观」只是备选）。
+ *   - 所以中文名取**用户 Win7 上的真名「颜色(C)」**（英文直译「外观」只是备选）。
  *
  * 要改回「外观(C)」只改这一行。
  */

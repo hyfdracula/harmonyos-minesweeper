@@ -67,9 +67,9 @@ export class GameStats {
   private static levelRecords: Map<string, LevelRecord> = new Map();
 
   /**
-   * 外观设置（**原版重启后是保留的** ✓）。
+   * 外观设置（**原版重启后是保留的**）。
    * 0 = 蓝棋盘 / 扫雷玩法，1 = 绿棋盘 / 花园玩法。
-   * 存在这里而不是 SpriteAtlas 里，是因为它要进 preferences 存档 ✓。
+   * 存在这里而不是 SpriteAtlas 里，是因为它要进 preferences 存档。
    */
   static boardStyle: number = 0;
   static gameStyle: number = 0;
@@ -118,8 +118,8 @@ export class GameStats {
   /**
    * 保存外观设置（棋盘样式 / 游戏样式）。
    *
-   * 原版 Win7 的「颜色」对话框选完是**持久**的：下次启动还是绿色棋盘 / 花园玩法 ✓。
-   * 之前我们只在内存里切，重启就回默认 ✗。
+   * 原版 Win7 的「颜色」对话框选完是**持久**的：下次启动还是绿色棋盘 / 花园玩法（已验证）。
+   * 之前我们只在内存里切，重启就回默认（不对）。
    *
    * @param board 0 = 蓝棋盘，1 = 绿棋盘
    * @param game  0 = 扫雷玩法，1 = 花园玩法

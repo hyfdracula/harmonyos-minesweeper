@@ -106,7 +106,7 @@ export struct MinefieldCanvas {
     });
     const atlasReady: Promise<void> = this.controller.atlas.load(abilityCtx);
     statsReady.then(() => atlasReady).then(() => {
-      // 恢复上次的外观设置（原版重启后保留 ✓；存档读失败就还是默认蓝棋盘）
+      // 恢复上次的外观设置（原版重启后保留；存档读失败就还是默认蓝棋盘）
       const bs: BoardStyle = GameStats.boardStyle === 1 ? BoardStyle.Green : BoardStyle.Blue;
       const gs: GameStyle = GameStats.gameStyle === 1 ? GameStyle.Flowers : GameStyle.Mines;
       this.controller.atlas.applyStyle(bs, gs);

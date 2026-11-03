@@ -240,7 +240,7 @@ export class GameController {
    * 这里补的是「窗口级变化但尺寸还没变」的那一瞬，以及给审计留一条日志依据。
    *
    * 幂等：layout() 里「用户手动缩放过就保留档位」那条规则照旧生效，
-   * 所以折叠换屏**不会把用户的缩放档重置回适配档** ✓
+   * 所以折叠换屏**不会把用户的缩放档重置回适配档**（已确认）
    * （用户原话：折叠换屏时不丢视角）。
    */
   onWindowStageChanged(): void {
@@ -1841,7 +1841,7 @@ export class GameController {
         console.info('[Dialog] 应用外观 ' +
           (Appearance.pendingBoard === BoardStyle.Green ? '绿' : '蓝') + '/' +
           (Appearance.pendingGame === GameStyle.Flowers ? '花园' : '扫雷'));
-        // 原版重启后保留外观 ✓ → 存进 preferences
+        // 原版重启后保留外观 → 存进 preferences
         GameStats.saveStyle(
           Appearance.pendingBoard === BoardStyle.Green ? 1 : 0,
           Appearance.pendingGame === GameStyle.Flowers ? 1 : 0).catch(() => {
