@@ -1190,6 +1190,9 @@ export class GameController {
       const booms = this.buildBoomList();
       if (booms.length > 0) {
         Anim.startTrip(booms);
+        // 诊断日志：爆炸级联开始的时刻。用来在**设备上**量
+        // 「级联开始 -> 弹框」和「跳过 -> 弹框」两个间隔（毫秒精度）。
+        console.info('[Anim] 爆炸级联开始 ' + booms.length + ' 颗');
         // 爆炸三段（开始 / 中 / 结束）在这里起 —— **判负只有这一条路**
         // （点开踩到的雷与和弦翻出邻雷，最后都走 notifyGameOver），
         // 所以起始音放在这里，两条路都响、而且只响一次
@@ -1282,6 +1285,8 @@ export class GameController {
       }
     }
     Anim.startWin(cells, times);
+    // 诊断日志：胜利扫描条开始的时刻（同上，用来在设备上量间隔）
+    console.info('[Anim] 胜利扫描条开始 ' + cells.length + ' 束');
     this.pendingGameOver = true;
     this.startAnimTimer();
   }
