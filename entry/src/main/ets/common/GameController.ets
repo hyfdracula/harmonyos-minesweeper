@@ -999,6 +999,14 @@ export class GameController {
     Anim.stopWin();
     this.stopBombTail();
     this.stopBombRunLoop();
+    // **正在响的爆炸声也要停**（Codex 复审 P2，2026-11-03）：
+    // stopBombTail() 只撤了延时播放的定时器，已经在放的那一声还在放完 ——
+    // 于是「框已经弹出来了，爆炸声还在耳朵里响」。
+    // 原版是先停循环再放结束音（SoundPlayer.stop 的注释里写了这件事），
+    // 这里跳过动画就等于「爆炸没放完就停了」，所以三段都得停。
+    SoundPlayer.stop(Sound.BOMB_START);
+    SoundPlayer.stop(Sound.BOMB_RUN);
+    SoundPlayer.stop(Sound.BOMB_END);
     // 弹框：与「动画自然放完」同一条路（顺序也相同：先建框、再重画、最后通知）
     const won = this.engine.gameState === GameState.Won;
     this.buildDialog(won);
@@ -1111,6 +1119,14 @@ export class GameController {
 
   /** 长按一格：标记循环 */
   longPress(px: number, py: number): void {
+    // 菜单栏上的长按**不**跳动画（Codex 复审 P2，2026-11-03）：
+    // 普通点击菜单栏是被排除在「跳过」之外的（菜单是另一个控件，见原版
+    // BoardWidget.cpp:783 的 mousePressEvent 只管棋盘区域），
+    // 长按菜单栏却会走到 longPress() 里跳过动画 —— 两条路不一致。
+    // 所以这里先把菜单栏排掉。
+    if (this.isOnMenuBar(px, py)) {
+      return;
+    }
     // 结算动画期间长按：跟点击一样，立刻跳过动画弹结算框
     // （原版是「任何一次按下」都能跳，不分左右键，见 BoardWidget.cpp:789）。
     if (this.skipGameOverAnimation()) {
