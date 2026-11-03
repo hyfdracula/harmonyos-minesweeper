@@ -1,0 +1,9 @@
+The skip path leaves explosion audio playing after the animation is dismissed, and long-presses on the menu bar bypass the menu exclusion applied to taps. Both are observable regressions in the new interaction.
+
+Full review comments:
+
+- [P2] Stop active explosion audio when skipping the animation — C:\Users\19161\saolei\entry\src\main\ets\common\GameController.ets:998-1001
+  If the player skips a loss after `BOMB_RUN` has started, `stopBombTail()` cancels its timers but does not stop the sound already playing. The result dialog appears while the explosion audio continues for the rest of the WAV; the same can happen with `BOMB_START` or `BOMB_END`. Stop the active explosion sounds when taking this skip path.
+
+- [P2] Exclude menu long-presses from the skip path — C:\Users\19161\saolei\entry\src\main\ets\common\GameController.ets:1113-1117
+  During a result animation, holding a finger on the menu bar for 400 ms invokes `controller.longPress()` directly from the canvas touch timer. This new call skips the animation and opens the result dialog, even though ordinary menu taps are deliberately handled before the skip check. Check the menu area or open-menu state before allowing a long-press to skip, so a menu interaction does not become a result-dialog interaction.
