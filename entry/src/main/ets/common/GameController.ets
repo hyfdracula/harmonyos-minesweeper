@@ -964,8 +964,62 @@ export class GameController {
     return r * e.colCount + c;
   }
 
-  /** 点一格：开格 */
+  /**
+   * 点一下跳过结算动画（原版 Win7 的行为）。
+   *
+   * 依据：参考实现 `linux-minesweeper/src/ui/BoardWidget.cpp:783-793`：
+   *   ```cpp
+   *   void BoardWidget::mousePressEvent(QMouseEvent *event) {
+   *       if (m_introActive) { ... }
+   *       if (m_board->over()) {
+   *           finishExplosionNow();   // a click skips the cascade, like Win7
+   *           finishWinNow();
+   *           return;                 // 这次点击被吃掉，不会开格
+   *       }
+   *   ```
+   * 两个要点（都跟直觉不一样，照着原版来）：
+   *
+   * 1. **判据是「棋盘已结束」，不是「点到了某一格」** ——
+   *    所以点棋盘上的任何地方都能跳：点格子、点格子旁边的空白、点状态条那一带，
+   *    都不用正好点在雷上，也不用正好点在光幕上。
+   * 2. **判负的爆炸级联和胜利的拆雷光幕都能跳**（原版两个函数都调了）。
+   *
+   * 跳完之后弹的框，和「动画自然放完」弹的是同一个框、走的是同一条路
+   * （顺序也一样：先建框、再重画、最后通知）。
+   *
+   * @return true = 这次点击被用来跳动画了（调用方不要再处理这次点击）
+   */
+  skipGameOverAnimation(): boolean {
+    if (!this.pendingGameOver) {
+      return false;
+    }
+    // 动画状态和它的声音一起停
+    this.pendingGameOver = false;
+    Anim.stopTrip();
+    Anim.stopWin();
+    this.stopBombTail();
+    this.stopBombRunLoop();
+    // 弹框：与「动画自然放完」同一条路（顺序也相同：先建框、再重画、最后通知）
+    const won = this.engine.gameState === GameState.Won;
+    this.buildDialog(won);
+    this.draw();
+    const cb = this.onGameOver;
+    if (cb !== null) {
+      cb(won);
+    }
+    console.info('[Anim] 点击跳过结算动画（' + (won ? '胜利' : '失败') + '）');
+    return true;
+  }
+
+  /**
+   * 点一格：开格
+   */
   tap(px: number, py: number): void {
+    // 结算动画（爆炸级联 / 胜利光幕）期间点一下：立刻跳过动画、马上弹结算框。
+    // 必须在「开格」之前判 —— 判负的那一下点击本身不能把刚起的动画秒跳掉。
+    if (this.skipGameOverAnimation()) {
+      return;
+    }
     if (this.dialog !== null) {
       // 结束对话框开着时，棋盘不接受点击
       return;
@@ -1057,6 +1111,11 @@ export class GameController {
 
   /** 长按一格：标记循环 */
   longPress(px: number, py: number): void {
+    // 结算动画期间长按：跟点击一样，立刻跳过动画弹结算框
+    // （原版是「任何一次按下」都能跳，不分左右键，见 BoardWidget.cpp:789）。
+    if (this.skipGameOverAnimation()) {
+      return;
+    }
     const idx = this.hitTest(px, py);
     if (idx < 0) {
       return;

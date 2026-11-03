@@ -483,6 +483,15 @@ export struct MinefieldCanvas {
       }
       return;
     }
+    // 结算动画（爆炸级联 / 胜利光幕）期间点一下：立刻跳过动画、马上弹结算框。
+    // 原版 Win7 就是这样（见 linux-minesweeper BoardWidget.cpp:789-792）。
+    //
+    // 位置很讲究：
+    //  - 要在**菜单栏之后**：原版的菜单是另一个控件，点菜单不会跳过动画；
+    //  - 要在**双击和弦之前**：不然双击会被判成和弦，而不是跳过动画。
+    if (this.controller.skipGameOverAnimation()) {
+      return;
+    }
     const idx = this.controller.hitTest(px, py);
     const now = Date.now();
     if (idx >= 0 && idx === this.lastTapIndex && now - this.lastTapTime < DOUBLE_TAP_MS) {
