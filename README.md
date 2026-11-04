@@ -32,7 +32,7 @@ Windows 7 扫雷的 HarmonyOS（ArkTS）复刻，逐像素对齐原版：精灵�
 | Mate X7 / Mate 90 Pro / MatePad 12.2（模拟器） | 2210x2416 / 1280x2832 / 2800x1840 | 四域点击回归全绿 |
 
 折叠屏的**代码**留着（折叠换屏重取密度、`windowSizeChange` 重建布局、双屏几何表）——
-那是通用机制，平板的横竖屏切换走同一条路 ✓。
+那是通用机制，平板的横竖屏切换走同一条路。
 
 适配方式（都在 `entry/src/main/ets/common/GameController.ets` 里）：
 
