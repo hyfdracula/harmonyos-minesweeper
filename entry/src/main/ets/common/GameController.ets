@@ -1037,6 +1037,28 @@ export class GameController {
       return;
     }
     const e = this.engine;
+    // 【增强，与原版不同】局终（判负/判胜）之后关掉结算框，再点棋盘 = **直接重开一局**。
+    //
+    // 原版行为（Win7，以及 Win7 保真复刻 linux-minesweeper 的 BoardWidget.cpp:783-793）：
+    //   if (m_board->over()) { finishExplosionNow(); finishWinNow(); return; }
+    // —— 棋局一结束，棋盘上的点击**全部被吃掉**，什么都不发生；
+    // 要重开只能用菜单「游戏 → 新建」或 F2。
+    // 这是**我们自己加的易用性功能**，不是复刻（口径同 SPEC §7 第 7 条：
+    // 自加的易用性要单独标注为增强，不能混进「与 Win7 一致」的清单里）。
+    //
+    // 为什么加（2026-11-04 用户反馈）：
+    //   「关掉结算弹窗之后再点棋盘，界面一点反应都没有」——
+    //   局终后棋盘是死的，而状态条上又没有笑脸按钮（Win7 确实没有），
+    //   于是在**不碰菜单**的前提下没有第二条路重开，用户容易以为应用卡住了。
+    //   点了就重开，语义直白，也和弹窗上的「再来一局」一致。
+    //
+    // 注意：必须**结算框已经关掉**才走到这里 —— 框开着时上面那两行会先返回，
+    // 框上的点击仍然只归框自己。
+    if (e.gameState === GameState.Won || e.gameState === GameState.Lost) {
+      console.info('[Game] 局终后点棋盘：重开一局（增强功能，原版锁死棋盘）');
+      this.restart();
+      return;
+    }
     const r = Math.floor(idx / e.colCount);
     const c = idx - r * e.colCount;
     const wasReady = e.gameState === GameState.Ready;
