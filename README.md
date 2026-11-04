@@ -17,6 +17,19 @@ Windows 7 扫雷的 HarmonyOS（ArkTS）复刻，逐像素对齐原版：精灵�
 蓝/绿棋盘与扫雷/花园玩法、踩雷爆炸级联、胜利拆雷扫描条、开局发牌动画、
 状态条七段数码管计数器。
 
+## 下载安装
+
+- **安装包（未签名 HAP）**：
+  <https://github.com/hyfdracula/harmonyos-minesweeper/releases/download/v1.0.0/harmonyos-minesweeper-unsigned.hap>
+- **release 页面（同一个包 + 说明）**：
+  <https://github.com/hyfdracula/harmonyos-minesweeper/releases/tag/v1.0.0>
+- **安装步骤**：[`INSTALL.md`](INSTALL.md)（签名、装机、命令行签名的完整命令）
+
+> 附件是**未签名**的包 —— HarmonyOS 的安装包必须签名才能装，
+> 拿到你自己的签名材料签一次即可（`INSTALL.md` 里有 DevEco 图形界面和命令行两条路）。
+> 我们那个已签名的调试包只对开发者本人那两台设备有效，别人直接装会报
+> `9568423 device is unauthorized`，所以没有把它发出来。
+
 ---
 
 ## 1. 目标平台与适配
