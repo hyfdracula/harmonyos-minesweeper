@@ -96,6 +96,16 @@ export struct MinefieldCanvas {
     const abilityCtx = getContext(this) as common.UIAbilityContext;
     // 音效播放器需要 AbilityContext 才能取 rawfile
     SoundPlayer.init(abilityCtx);
+    // 预热所有音效播放器（2026-11-04，用户报「音画不同步」）：
+    // 第一次播某个音效时要现做 getRawFd + createAVPlayer + 等 initialized，
+    // 这几百毫秒全花在「该响的那一刻之后」，声音于是比画面晚一大截。
+    // 预热之后，真正要播时只剩 stop → seek → play，延迟降到几十毫秒。
+    //
+    // 用 setTimeout 推到下一轮事件循环：此刻 UI 还没画完第一帧，
+    // 把这几个百毫秒的异步活儿让给首帧渲染。
+    setTimeout(() => {
+      SoundPlayer.warmup();
+    }, 0);
     // 读统计（含**外观设置**）和图集，**两个都完成**才开局。
     //
     // 坑（2026-10-31 实测）：之前这两步是并行的（GameStats.load 不 await），

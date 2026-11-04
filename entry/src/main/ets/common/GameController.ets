@@ -209,6 +209,12 @@ export class GameController {
     this.stopRipple();
     // 还没播完的爆炸音也要撤（Codex 复审 P2：上一局的爆炸声会串到新局）
     this.stopBombTail();
+    // **已经在响的逐雷爆点也要停**（Codex 复审第 12 轮 P2，2026-11-05）：
+    // `stopBombTail()` 只撤掉**还没到点**的定时器；
+    // 而逐雷的 `gameLose` 有 2 秒长，每颗雷的爆炸动画只有 1 秒 ——
+    // 所以级联自然结束后马上点「再玩一局」，最后几颗雷的声音
+    // 还会盖在新局的发牌动画上。
+    SoundPlayer.stopPooled(Sound.GAME_LOSE);
     this.gameOverNotified = false;
     this.dialog = null;
     this.menuOpenId = '';
@@ -220,9 +226,43 @@ export class GameController {
     this.layout();
     this.draw();
     // 新局的发牌动画（方砖从四角一波波弹起）
-    this.startDealIn();
+    const dealStart: number = this.startDealIn();
     if (!silent) {
-      SoundPlayer.play(Sound.GAME_START);
+      // **发牌配乐是 firstPaint.wav，不是 gameStart.wav**（2026-11-04 修正，
+      // 依据见下面的说明；此前这两个是**反的**）。
+      //
+      // 依据（Lmy 复刻 Minesweeper.cpp:1495-1508，utf8 版）：
+      //   int *ptemp1 = getFirstPaintNo(row, col);      // 初始化动画贴图块序列数组
+      //   if ((optionFlag & OF_DRAW) && (optionFlag & OF_SOUND))
+      //       PlaySound(MAKEINTRESOURCE(IDR_WAVE1), NULL, SND_RESOURCE | SND_ASYNC);
+      //   for (int i = 0; i < brickNumber; i++) { ...弹起一格... }
+      // 而 IDR_WAVE1 = firstPaint.wav（Minesweeper.rc:344）——
+      // 也就是说**发牌动画的配乐就是 firstPaint.wav**。
+      //
+      // 另一份复刻（linux-minesweeper）则把 gameStart.wav 标成
+      // "NewBoard  a fresh board being dealt"（src/ui/Sounds.h:6），
+      // 在 newGame() 里紧挨着 playIntro() 播（MainWindow.cpp:211-213）。
+      //
+      // 两份复刻**各说各话**，但都指向「发牌动画有配乐」这件事。
+      // 采信 Lmy 版（它是 Win32 版，资源 ID 与原版一一对应，直接照搬原版资源），
+      // 并且这正好解释用户 2026-11-04 报的现象：
+      // 「点第一个方块时又播了一次开始音」—— 那是本项目把 firstPaint
+      // 错挂在首点上的后果（首点本该按 tileSingle/tileMultiple/zeroDevelop 走）。
+      //
+      // 那 gameStart.wav 呢？linux 版把它用在 newGame()，
+      // 也就是**同一个时刻**（发牌）。两份复刻对「发牌那一刻播哪一条」的答案不同，
+      // 但**都是发牌那一刻**，没有一条是给「首点」的。
+      // 本项目的处理：**发牌播 firstPaint**（原版 Win32 资源对应，可考），
+      // 首点不再单独出一声。
+      //
+      // **对齐**：声音锚在发牌的起始时刻上（dealStart），
+      // 与画面用同一套 `Date.now()` 时间轴 —— 这样「砖块开始弹」和「配乐开始响」
+      // 是同一个时刻，而不是差着播放器准备好的那几百毫秒。
+      if (dealStart > 0) {
+        SoundPlayer.playAt(Sound.FIRST_PAINT, dealStart);
+      } else {
+        SoundPlayer.play(Sound.FIRST_PAINT);
+      }
     }
   }
 
@@ -753,15 +793,23 @@ export class GameController {
   private dealStart: number = 0;
   private dealActive: boolean = false;
 
-  private startDealIn(): void {
+  /**
+   * 开始发牌动画。
+   *
+   * @returns 发牌的**起始时刻**（`Date.now()` 口径）。
+   *   发牌配乐要用它做对齐：动画的第一格是在这一时刻之后弹起来的，
+   *   声音也该在这一刻响（而不是在「调用 play 的那一刻」才开始异步准备）。
+   */
+  private startDealIn(): number {
     const e = this.engine;
     if (e.rowCount <= 0 || e.colCount <= 0) {
-      return;
+      return 0;
     }
     this.dealFlags = DealIn.frameAt(0, e.rowCount, e.colCount);
     this.dealStart = Date.now();
     this.dealActive = true;
     this.ensureFrameTimer();
+    return this.dealStart;
   }
 
   private stopDealIn(): void {
@@ -805,17 +853,23 @@ export class GameController {
   private rippleStart: number = 0;
   private rippleActive: boolean = false;
 
-  /** 开始一次涟漪（展开格数不足时自动跳过） */
-  private startRipple(startCell: number, opened: number[]): void {
+  /**
+   * 开始一次涟漪（展开格数不足时自动跳过）。
+   *
+   * @returns 涟漪的**起始时刻**（`Date.now()` 口径）；没涟漪返回 0。
+   *   翻开格子的那一声要用它做音画对齐（锚到同一个绝对时刻）。
+   */
+  private startRipple(startCell: number, opened: number[]): number {
     this.stopRipple();
     const steps = Ripple.stepsFrom(startCell, opened, this.engine.rowCount, this.engine.colCount);
     if (steps.length === 0) {
-      return;
+      return 0;
     }
     this.rippleSteps = steps;
     this.rippleStart = Date.now();
     this.rippleActive = true;
     this.ensureFrameTimer();
+    return this.rippleStart;
   }
 
   private stopRipple(): void {
@@ -1012,6 +1066,11 @@ export class GameController {
     SoundPlayer.stop(Sound.BOMB_START);
     SoundPlayer.stop(Sound.BOMB_RUN);
     SoundPlayer.stop(Sound.BOMB_END);
+    // **逐雷爆点用的池子声音也要停**（Codex 复审 P2，2026-11-05）：
+    // 那些声音走的是池子（4 个播放器轮转），不在 `players` 里，
+    // `SoundPlayer.stop(BOMB_*)` 停不到它们 ——
+    // 于是「框已经弹出来了，爆炸还在耳朵里/屏幕上炸」。
+    SoundPlayer.stopPooled(Sound.GAME_LOSE);
     // 弹框：与「动画自然放完」同一条路（顺序也相同：先建框、再重画、最后通知）
     const won = this.engine.gameState === GameState.Won;
     this.buildDialog(won);
@@ -1068,45 +1127,99 @@ export class GameController {
     const c = idx - r * e.colCount;
     const wasReady = e.gameState === GameState.Ready;
     const outcome = e.reveal(r, c);
+    // 翻开格子的那一声，**先记下来，等涟漪起点确定后再按同一时刻播**
+    // （音画对齐，见下面 startRipple 之后的 playRevealSound）。
+    let revealSound: string = '';
     if (outcome.changed) {
       if (outcome.lost) {
         // 踩雷：原版是「爆炸开始 → 爆炸中(循环) → 爆炸结束」三段。
-        // 参考实现：爆炸动画 25 帧 × 23ms = 575ms，动画结束后循环播爆炸中音，最后播结束音。
-        // 本项目动画 8 帧 × 70ms = 560ms，与原版动画时长基本一致。
         //
         // **爆炸起始音不在这里播**：判负有两条路（点开踩到的雷 / 和弦把邻雷翻出来），
         // 起始音统一放在 notifyGameOver() 的判负分支里起，两条路都有，
         // 也只播一次（Codex 复审 P2，2026-11-01）。
         //
+        // 三段的**切换点**用本工程自己的动画时长（`Anim.explodeDurationMs()`
+        // = 23 帧 × 43.478ms = **1000ms**）——
+        // 别用参考实现的 575ms（那是它 25 帧 × 23ms 的长度），
+        // 照抄会让「爆炸中音」比画面上的爆炸**早 425ms** 响起来（2026-11-04 修）。
+        //
         // 花园（花朵）玩法**不播爆炸三段**：原版的 mineTripped() 在花园模式下直接返回
         // （Linux 复刻 Sounds.h:71），只有枯萎的花声。我们这里也要跳过，
         // 否则爆炸三段与花朵声叠成 4 条一起响（音效审计 P1，2026-11-01）。
-      } else if (wasReady) {
-        // 第一下：原版播 firstPaint（不是 tileSingle）
-        SoundPlayer.play(Sound.FIRST_PAINT);
       } else if (e.cellAt(r, c).adjacent === 0) {
-        // 0 格展开：原版用 zeroDevelop 这一声
-        SoundPlayer.play(Sound.ZERO_DEVELOP);
+        // 0 格展开：原版用 zeroDevelop 这一声。
+        //
+        // 依据（Lmy 复刻 Minesweeper.cpp:1783，utf8 版）：
+        //   int zeroDevelop(int rowDest, int colDest, ...) {
+        //     ...
+        //     if (optionFlag & OF_SOUND)
+        //       PlaySound(MAKEINTRESOURCE(IDR_WAVE2), NULL, SND_RESOURCE | SND_ASYNC);
+        // 而 IDR_WAVE2 = zeroDevelop.wav（Minesweeper.rc:345）。
+        // 注意：这个判断**不看是不是首点** —— 首点也是按同一套规则走的。
+        revealSound = Sound.ZERO_DEVELOP;
       } else if (outcome.opened.length > 1) {
-        SoundPlayer.play(Sound.TILE_MULTIPLE);
+        // 翻开多格：tileMultiple
+        // 依据（linux 复刻 MainWindow.cpp:41-48，注释原文
+        // "The original's SingleReveal / MultiReveal pair."）：
+        //   connect(m_board, &Board::cellsOpened, this, [this](const QVector<QPoint> &order) {
+        //       if (order.size() > 1) m_sounds.multiReveal();
+        //       else if (order.size() == 1) m_sounds.singleReveal();
+        //   });
+        // —— 判据是**翻开的格数**，没有「首点」这一说。
+        revealSound = Sound.TILE_MULTIPLE;
       } else {
-        SoundPlayer.play(Sound.TILE_SINGLE);
+        // 翻开一格：tileSingle（同上，order.size() == 1）
+        revealSound = Sound.TILE_SINGLE;
       }
-    } else if (e.gameState === GameState.Playing &&
-      !e.cellAt(r, c).revealed && e.cellAt(r, c).mark !== Mark.Flag) {
-      // 只有**还在玩**的时候才响「非法操作」音。
-      // 坑（音效审计 P2，2026-11-01）：结束框点「换个难度(D)」把框关掉后棋局仍是终局，
-      // 这时再点棋盘会走进这个分支 → 每点一声 invalidMove；原版终局后棋盘是锁住的。
-      SoundPlayer.play(Sound.INVALID_MOVE);
     }
+    // 注意：这里**没有**「点了已翻开/已插旗的格子 → 响 invalidMove」的分支。
+    //
+    // 原来是有这么一条的（`else if (e.gameState === GameState.Playing &&
+    //   !e.cellAt(r, c).revealed && e.cellAt(r, c).mark !== Mark.Flag)`），
+    // 但它是**死代码**（2026-11-04 音效考古时发现）：
+    //   `e.reveal(r, c)` 返回 changed=false 只有两种可能 ——
+    //     ① 棋局已终局（isOver()，MinesweeperEngine.ets:246-248）；
+    //     ② 该格**已翻开**或**已插旗**（MinesweeperEngine.ets:265-267）。
+    //   而上面那个分支要求的是「**没**翻开、**没**插旗」——
+    //   两条正好互斥，所以它永远进不去。
+    //
+    // 而且原版本来就不该在这里响：
+    //   依据（linux 复刻 BoardWidget.cpp:833-849，mouseReleaseEvent）：
+    //     if (m_mode == Press::Chord) {
+    //         if (m_press.x() >= 0 && !m_board->over()) {
+    //             if (!m_board->chord(m_press.y(), m_press.x()))
+    //                 emit invalidMove();          // ← 只有和弦失败才响
+    //         }
+    //     } else if (m_mode == Press::Single && ...) {
+    //         m_board->reveal(c.y(), c.x());          // ← 普通点击不响
+    //     }
+    //   即 invalidMove 是**和弦失败**的专属音效（我们的 chord() 里已经对了）。
     if (wasReady && e.gameState === GameState.Playing) {
       // 原版：第一下就把计数器**置 1**，然后每秒 +1（SPEC §3.7）——不是先显示 00。
       this.seconds = 1;
       this.startTimer();
     }
     // 洪泛涟漪：展开格数够多才涟漪（原版少于 6 格直接出现）
+    let revealAt: number = 0;
     if (!outcome.lost && outcome.opened.length >= Ripple.MIN_CELLS) {
-      this.startRipple(r * e.colCount + c, outcome.opened);
+      revealAt = this.startRipple(r * e.colCount + c, outcome.opened);
+    }
+    // **音画对齐**：把翻开的那一声锚到「格子开始出现」的那一刻。
+    //
+    // 坑（2026-11-04，用户报「音画不同步」）：
+    // 画面是按 `Date.now()` 的绝对时间轴走的（涟漪从 rippleStart 起算），
+    // 而声音是从「调用 play 的那一刻」开始异步准备播放器的 ——
+    // 首次播某个音效还要现建 AVPlayer，几百毫秒全花在「该响的那一刻之后」。
+    // 于是声音总是比画面晚一截，格子已经淡进来了那一声才响。
+    //
+    // 这里用 playAt 把声音锚到与画面同一个绝对时刻：
+    // 有涟漪就锚到涟漪起点，没有涟漪（格子直接出现）就锚到现在。
+    if (revealSound !== '') {
+      if (revealAt > 0) {
+        SoundPlayer.playAt(revealSound, revealAt);
+      } else {
+        SoundPlayer.play(revealSound);
+      }
     }
     this.syncTimerWithState();
     this.notifyGameOver();
@@ -1132,6 +1245,10 @@ export class GameController {
     const before = e.revealedCount;
     e.chord(r, c);
     if (e.revealedCount > before) {
+      // 和弦翻开多格 → tileMultiple（同 linux 复刻的 order.size() > 1 规则）。
+      //
+      // 注意和弦**不走涟漪**（原版的洪泛淡入只发生在点开的那一刻，
+      // 和弦是格子直接出现），所以这里没有可对齐的动画起点，直接播。
       SoundPlayer.play(Sound.TILE_MULTIPLE);
     } else if (e.gameState === GameState.Playing) {
       // 和弦不成（周围旗数 ≠ 数字）→ 原版播 invalidMove。
@@ -1196,7 +1313,11 @@ export class GameController {
     this.gameOverNotified = true;
     const won = s === GameState.Won;
     if (won) {
-      SoundPlayer.play(Sound.GAME_WIN);
+      // 胜利音的**起播时刻**由 startWinSweep 决定（与扫描条同时起），
+      // 这里只记下「该在扫描条起播时响这一声」。
+      // 依据：linux 复刻 MainWindow.cpp:240-243，胜利时先 m_sounds.win()，
+      // 随后扫描条扫过棋盘（BoardWidget 的 win 动画）。
+      this.pendingWinSound = true;
     } else if (this.atlas.gameStyle === GameStyle.Flowers) {
       // 花园模式判负：换成三段花朵音效（雷数 ≤10 Short / ≤40 Medium / 更多 Long）。
       // 注意是**替换**而不是叠加 —— 两个播放器各自独立起播，叠加会变成两种声音同时响。
@@ -1209,7 +1330,10 @@ export class GameController {
         : (mines <= 40 ? Sound.FLOWER_LOSE_MEDIUM : Sound.FLOWER_LOSE_LONG);
       SoundPlayer.play(name);
     } else {
-      SoundPlayer.play(Sound.GAME_LOSE);
+      // 判负的「失败音」：**每颗雷各炸一声**（原版语义），
+      // 由 playBombTail 按每颗雷的起爆时刻逐颗触发（见那里的说明）。
+      // 这里只置个标记，表示「判负了，该有失败音」。
+      this.pendingLoseSound = true;
     }
     if (!won) {
       // 判负：先播完爆炸动画，再弹对话框（原版就是先炸后弹）。
@@ -1226,12 +1350,30 @@ export class GameController {
         // （Codex 复审 P2，2026-11-01：和弦触发的判负原来一声不响）。
         // 花园玩法不播爆炸三段（见 tap 里的说明）。
         if (this.atlas.gameStyle !== GameStyle.Flowers) {
-          SoundPlayer.play(Sound.BOMB_START);
-          this.playBombTail();
+          // **对齐**：起始音锚到级联的起始时刻，与画面同一套 `Date.now()` 时间轴。
+          // 原版是 PlaySound(..., SND_ASYNC) 紧接着动画的第一帧；
+          // 我们这里如果拿「调用 play 的那一刻」当起点，
+          // 声音会因播放器准备而滞后于画面（用户报「音画不同步」）。
+          const tripStart: number = Date.now();
+          SoundPlayer.playAt(Sound.BOMB_START, tripStart);
+          this.playBombTail(tripStart, booms);
+          // 失败音**不再**在这里单独播一声 ——
+          // 原版是**每颗雷各炸一声**（叠着响），由 playBombTail 按每颗雷的
+          // 起爆时刻逐颗触发（依据：linux 复刻 BoardWidget.cpp:305-306
+          // 「环走到这颗雷时才 emit mineTripped」—— 那就是原版的音画同步机制）。
+          this.pendingLoseSound = false;
         }
         this.pendingGameOver = true;
         this.startAnimTimer();
         return;
+      }
+      // **没有雷可炸**（级联表是空的）：没有爆炸动画，也就没人逐雷触发失败音。
+      // 这时得自己播一声，否则判负**一声不响**。
+      // 什么时候会这样：理论上判负必然至少有一颗没插旗的雷要炸（就是踩中的那颗），
+      // 但引擎与级联表是两套判断，万一对不上，这里兜住。
+      if (this.pendingLoseSound) {
+        this.pendingLoseSound = false;
+        SoundPlayer.play(Sound.GAME_LOSE);
       }
     } else {
       // 胜利：扫描条自下而上扫过棋盘，各行的雷依次被拆解光束烧掉，
@@ -1314,9 +1456,22 @@ export class GameController {
     Anim.startWin(cells, times);
     // 诊断日志：胜利扫描条开始的时刻（同上，用来在设备上量间隔）
     console.info('[Anim] 胜利扫描条开始 ' + cells.length + ' 束');
+    // **对齐**：胜利音锚到扫描条的起始时刻（与画面同一套 `Date.now()` 时间轴），
+    // 而不是「判定胜利的那一刻」—— 那一刻扫描条还没开始，
+    // 声音会因播放器准备而早于画面（用户报「音画不同步」）。
+    if (this.pendingWinSound) {
+      this.pendingWinSound = false;
+      SoundPlayer.playAt(Sound.GAME_WIN, Date.now());
+    }
     this.pendingGameOver = true;
     this.startAnimTimer();
   }
+
+  /** 胜利音待发（判胜时置位，扫描条起播时发出，见 notifyGameOver） */
+  private pendingWinSound: boolean = false;
+
+  /** 失败音待发（判负时置位，爆炸级联起播时发出，见 notifyGameOver） */
+  private pendingLoseSound: boolean = false;
 
   /**
    * 判负时的**爆炸级联表**（原版 Win7 的冲击波）。
@@ -1373,21 +1528,43 @@ export class GameController {
   /**
    * 爆炸音的后两段。
    *
-   * 原版时序（参考实现的 mineBomb 函数）：
-   *   1) 爆炸开始音（一次性）
-   *   2) 爆炸动画 25 帧 × 23ms = 575ms
-   *   3) 爆炸中音，**循环**播放，同时其它雷逐个烧红
-   *   4) 爆炸结束音
-   * 各 wav 实测时长：mineBombStart 1.294s / mineBombRun 3.949s / mineBombEnd 1.951s。
+   * 原版时序（Lmy 复刻 Minesweeper.cpp:1815-1840，utf8 版 mineBomb 函数）：
+   *   1) 爆炸开始音 IDR_WAVE4 = mineBombStart.wav（一次性）
+   *   2) 点到的那颗雷的爆炸动画：25 帧 × Sleep(23) = 575ms
+   *   3) 动画放完 → 播爆炸中音 IDR_WAVE5 = mineBombRun.wav，**SND_LOOP 循环**，
+   *      同时其它雷逐个烧红
+   *   4) 全部炸完 → 播爆炸结束音 IDR_WAVE6 = mineBombEnd.wav
    *
-   * 两个坑（Codex 复审 P2，2026-11-01）：
+   * 各 wav 实测时长（2026-11-04 用 Python wave 模块复核）：
+   *   mineBombStart 1294ms / mineBombRun 3949ms / mineBombEnd 1951ms。
+   *
+   * 三个坑：
    * - **爆炸中音要续播**：wav 只有 3.949 秒，而大棋盘（30×24）的级联能到 6 秒以上；
    *   不续播就会「声音停了、动画还在炸」，中间好几秒静音。
-   * - **结束音的时刻从级联开始算**，不是从爆炸中音起算（否则会晚 575ms）。
+   * - **续播间隔要略短于 wav 时长**（3700ms < 3949ms）：长一点中间就有缝。
+   * - **结束音的时刻从级联开始算**，不是从爆炸中音起算（否则会晚一个动画时长）。
+   *
+   * 音画对齐（2026-11-04，用户报「音画不同步」）：
+   *   ① **切换点用本工程自己的动画时长**，不是参考实现的 575ms。
+   *      本工程的爆炸是 23 帧 × 43.478ms = **1000ms**
+   *      （Anim.EXPLODE_FRAMES × Anim.explodeFrameMs()），
+   *      参考实现是 25 帧 × 23ms = 575ms —— 直接抄 575 会让
+   *      「爆炸中音」比画面上的爆炸**早 425ms** 响起来。
+   *   ② 三段都用 `playAt` 锚到**级联的绝对起始时刻**，
+   *      而不是各用各的 setTimeout（那是「从调用时刻起算」，
+   *      一旦中途有抖动/跳过，三段就各自漂移）。
    */
-  private playBombTail(): void {
+  private playBombTail(tripStart: number, booms: Boom[]): void {
     // 整条级联要炸多久（从级联开始算起；Anim.startTrip() 刚跑过，值是准的）
     const totalMs: number = Math.max(0, Anim.tripEndMs());
+    // 点到的那颗雷的爆炸动画有多久（**本工程自己的帧数**，不是参考实现的 575ms）
+    const firstBoomMs: number = Anim.explodeDurationMs();
+    // 两个延时都从**级联的起始时刻**算起，而不是从「调用这一刻」算起。
+    // 这样即便中途有抖动（帧定时器偶尔晚一拍），三段的相对关系也不会漂。
+    const now: number = Date.now();
+    const toFirstBoom: number = Math.max(0, tripStart + firstBoomMs - now);
+    const toEnd: number = Math.max(0, tripStart + totalMs - now);
+    // ① 爆炸中音：第一颗雷的爆炸动画放完时起播
     this.bombTimer1 = setTimeout(() => {
       this.bombTimer1 = -1;
       SoundPlayer.play(Sound.BOMB_RUN);
@@ -1396,16 +1573,66 @@ export class GameController {
       this.bombTimer3 = setInterval(() => {
         SoundPlayer.play(Sound.BOMB_RUN);
       }, 3700);
-      // 结束音在**整条级联炸完**时响，时刻从级联开始算起。
-      const delay: number = Math.max(0, totalMs - 575);
-      this.bombTimer2 = setTimeout(() => {
-        this.bombTimer2 = -1;
-        this.stopBombRunLoop();
-        SoundPlayer.stop(Sound.BOMB_RUN);
-        SoundPlayer.play(Sound.BOMB_END);
-      }, delay);
-    }, 575);
+    }, toFirstBoom);
+    // ② 爆炸结束音：整条级联炸完时响，时刻从级联开始算起
+    this.bombTimer2 = setTimeout(() => {
+      this.bombTimer2 = -1;
+      this.stopBombRunLoop();
+      SoundPlayer.stop(Sound.BOMB_RUN);
+      SoundPlayer.play(Sound.BOMB_END);
+    }, toEnd);
+    // ③ **逐雷爆点**（原版的同步机制）：每颗雷在**它自己起爆的那一刻**炸一声。
+    //
+    // 依据（linux 复刻 BoardWidget.cpp:305-306）：
+    //   // The ring reached this mine; boom.
+    //   emit mineTripped();
+    // —— 环**走到**这颗雷的时候才发信号，所以声音与那一格的爆炸帧**同一时刻**。
+    // 这正是原版「音画同步」的机制：声音由**动画时钟**触发，不是另起一套定时器。
+    //
+    // 我们这边：boom.startMs 就是这颗雷的起爆时刻（相对级联起点），
+    // 与 Anim.boomFrame(index) 用的是同一个数 —— 所以声音与画面**天然对齐**。
+    //
+    // 为什么用池子（SoundPlayer.playPooled）：这些声音是**叠在一起**的。
+    // 只有一个播放器时第二声会把第一声打断，级联听起来是「哒哒哒」
+    // 而不是原版那种「轰隆隆一片」（原版留 30 个缓冲，见 SOUND-AUDIT.md §2）。
+    //
+    // **由动画时钟触发，不是另起一套定时器**（Codex 复审第 15 轮 P2，2026-11-05）：
+    // 原来给每颗雷挂一个 `setTimeout`。可是应用切到后台时，
+    // `pauseForBackground()` 会停掉帧定时器（动画随之暂停），
+    // 那些 `setTimeout` **却还在跑** —— 还没轮到炸的雷提前响了，
+    // 回到前台动画接着走时反而没有对应的声音。
+    // 改成每帧按 `Anim.tripElapsed` 判断「哪些雷到点了」（见 fireBoomSounds）：
+    // 动画停 → 声音停；动画继续 → 声音接着走。
+    this.bombSoundList = booms;
+    this.bombSoundNext = 0;
   }
+
+  /**
+   * 每帧调用：按**动画时钟**触发该炸的雷。
+   *
+   * 雷的起爆时刻 `b.startMs` 与画爆炸帧用的是同一个数
+   * （`Anim.boomStartMsOfCell` 那套），所以声音与画面天然对齐。
+   *
+   * 用的是动画时钟而不是 `setTimeout` 的原因：切后台时帧定时器停了，
+   * 动画随之暂停，这里也就**跟着停**（Codex 复审第 15 轮 P2）。
+   */
+  private fireBoomSounds(): void {
+    if (!Anim.tripActive) {
+      return;
+    }
+    while (this.bombSoundNext < this.bombSoundList.length) {
+      const b: Boom = this.bombSoundList[this.bombSoundNext];
+      if (Anim.tripElapsed < b.startMs) {
+        break;
+      }
+      this.bombSoundNext++;
+      SoundPlayer.playPooled(Sound.GAME_LOSE);
+    }
+  }
+
+  /** 逐雷爆点：按动画时钟触发的雷表，以及已经触发到第几颗 */
+  private bombSoundList: Boom[] = [];
+  private bombSoundNext: number = 0;
 
   /** 爆炸音延时的三个定时器（换局时必须撤掉，否则上一局的爆炸声会串到新局） */
   private bombTimer1: number = -1;
@@ -1431,6 +1658,12 @@ export class GameController {
       clearTimeout(this.bombTimer2);
       this.bombTimer2 = -1;
     }
+    // **逐雷爆点**：还没到点的由**动画时钟**管（见 fireBoomSounds），
+    // 这里只要把状态清掉 —— 动画停了就不会再触发。
+    // （Codex 复审第 15 轮 P2，2026-11-05：原来是给每颗雷挂 setTimeout，
+    //   切后台时那些定时器还在跑，还没炸的雷提前响了。）
+    this.bombSoundList = [];
+    this.bombSoundNext = 0;
     this.stopBombRunLoop();
   }
 
@@ -1484,6 +1717,9 @@ export class GameController {
     const dealMore = this.tickDealIn();
     const rippleMore = this.tickRipple();
     const animMore = Anim.tick(dt);
+    // 逐雷爆点**由动画时钟触发**（切后台时动画停，声音也跟着停，
+    // 不会被另一套定时器抢跑 —— Codex 复审第 15 轮 P2）
+    this.fireBoomSounds();
     const anyMore = dealMore || rippleMore || animMore;
 
     if (!anyMore) {
