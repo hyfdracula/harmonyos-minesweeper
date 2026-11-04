@@ -417,7 +417,10 @@ export class WinDialogPainter {
       lines: [
         { text: 'HarmonyOS 移植版', x: 86, y: 64, size: 12, align: 'left' },
         { text: '原版：Windows 7 扫雷', x: 86, y: 92, size: 12, align: 'left' },
-        { text: '适配：华为 Pura X Max 折叠屏', x: 86, y: 120, size: 12, align: 'left' }
+        // 目标机：2026-11-04 起是华为 MatePad Pro 12.2 平板（真机 3KQYD25331202962）。
+        // 原来这里写的是「华为 Pura X Max 折叠屏」，那是用户 2026-11-04 决定
+        // 不再适配的那台手机（见规格仓 docs\HANDOVER.md §0.1）。
+        { text: '适配：华为 MatePad Pro 12.2', x: 86, y: 120, size: 12, align: 'left' }
       ],
       buttons: [
         { id: 'close', label: '确定', x: 206, y: 153, w: 88, h: 25, borderColor: C_BTN_ACCENT }
