@@ -153,6 +153,11 @@ export class GameController {
     return { rows: 9, cols: 9, mines: 10, name: '初级' };
   }
 
+  /** 局终了吗（判负或判胜）。界面上用来决定「这一下点击算不算重开」。 */
+  get gameOver(): boolean {
+    return this.engine.gameState === GameState.Won || this.engine.gameState === GameState.Lost;
+  }
+
   /** 换难度并开新局 */
   setDifficulty(d: Difficulty): void {
     this.difficulty = d;

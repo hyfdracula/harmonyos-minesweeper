@@ -1,0 +1,6 @@
+The restart path leaves the touch component's double-tap state intact, causing a quick follow-up tap on the same cell to be ignored.
+
+Review comment:
+
+- [P2] Clear double-tap state when restarting from a board tap — C:\Users\19161\saolei\entry\src\main\ets\common\GameController.ets:1057-1060
+  If a player taps the finished board to restart, then taps the same cell within 300 ms to begin the new game, `MinefieldCanvas.handleTap()` treats the second tap as a double-tap and calls `chord()` instead of `tap()`. Because the new game is still in `Ready` state, `chord()` does nothing, so the first intended reveal is silently lost. Clear or bypass the canvas's double-tap state when this branch restarts the game.

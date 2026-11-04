@@ -499,8 +499,21 @@ export struct MinefieldCanvas {
       this.controller.chord(px, py);
       return;
     }
-    this.lastTapIndex = idx;
-    this.lastTapTime = now;
+    // 局终（棋盘已结束）时的点击是「重开一局」，**不记进双击状态**。
+    //
+    // 坑（Codex 对抗性复审第 9 轮的 P2，2026-11-04）：
+    // 重开后玩家多半会紧接着再点同一格开第一下 —— 若把「重开」那一下也记成双击的第一次，
+    // 300ms 内的第二下会被判成**和弦**；而新局里那格还没翻开，
+    // 和弦什么也不做，于是「开第一下」被静默吃掉（表现为点第一下没反应）。
+    //
+    // 所以局终时清掉双击状态：重开那一下不算，300ms 内的下一下就是正常的开格点击。
+    if (this.controller.gameOver) {
+      this.lastTapIndex = -1;
+      this.lastTapTime = 0;
+    } else {
+      this.lastTapIndex = idx;
+      this.lastTapTime = now;
+    }
     this.controller.tap(px, py);
   }
 }
