@@ -684,14 +684,18 @@ export class SoundPlayer {
     if (inflight !== undefined) {
       return inflight;
     }
-    // **总数上限真的要执行**（Codex 复审第 12 轮 P2，2026-11-05）：
+    // **总数上限真的要执行**（Codex 复审第 12 轮 P2、第 16 轮 P2，2026-11-05）：
     // 原来到顶了只打一句警告，然后**照样建** —— 等于没有上限。
     // 现在：到顶了先**回收一个闲置的普通播放器**腾名额；
-    // 回收不到（都在响）才退而求其次。
+    // 回收不到（都在响 / 都有在途请求）就**放弃这一声** ——
+    // 宁可少一声，也不能把实例数撑到平台上限之外
+    // （Codex 实测：原来能一路建到 17 个，超过平台建议的 16 个）。
     if (SoundPlayer.playerCount() + SoundPlayer.creatingCount >= SoundPlayer.HARD_MAX) {
       if (!SoundPlayer.reclaimIdle()) {
-        console.warn('[Sound] 实例数已达上限 ' + SoundPlayer.HARD_MAX +
-          '，' + name + ' 这一声可能播不出来');
+        const msg: string = '[Sound] 实例数已达上限 ' + SoundPlayer.HARD_MAX +
+          '，' + name + ' 这一声不播';
+        console.warn(msg);
+        throw new Error(msg);
       }
     }
     // **建之前就占位**（防并发超容量）
@@ -726,6 +730,11 @@ export class SoundPlayer {
       if (SoundPlayer.POOLED.indexOf(name) >= 0) {
         continue;
       }
+      // **有在途播放请求的不能回收**（Codex 复审第 16 轮 P2）：
+      // 它正在等 stop()/prepare()，回收了那个请求就废了（声音丢失）。
+      if (SoundPlayer.playerBusy.get(name) === true) {
+        continue;
+      }
       const p = SoundPlayer.players.get(name);
       if (p === undefined || p.state === 'playing') {
         continue;
@@ -733,10 +742,14 @@ export class SoundPlayer {
       p.release().catch(() => {
       });
       SoundPlayer.players.delete(name);
+      SoundPlayer.playerBusy.delete(name);
       return true;
     }
     return false;
   }
+
+  /** 普通播放器「有在途播放请求」的标记（见 playAsync / reclaimIdle） */
+  private static playerBusy: Map<string, boolean> = new Map();
 
   /**
    * 建一个新播放器（不登记到 players 里）。
@@ -785,7 +798,17 @@ export class SoundPlayer {
 
   private static async playAsync(ctx: common.UIAbilityContext, name: string): Promise<void> {
     const player = await SoundPlayer.ensurePlayer(ctx, name);
-    await SoundPlayer.playOn(player);
+    // **标记占用**：从拿到播放器到放完（状态切完）为止，
+    // 这个播放器**不能被别人回收**（Codex 复审第 16 轮 P2，2026-11-05）。
+    // 原来 `reclaimIdle()` 只看 `state !== 'playing'`，
+    // 而一个正在等 `stop()`/`prepare()` 的播放器状态也不是 playing ——
+    // 于是它会被回收掉，随后原请求的 prepare/play 失败，**声音丢失**。
+    SoundPlayer.playerBusy.set(name, true);
+    try {
+      await SoundPlayer.playOn(player);
+    } finally {
+      SoundPlayer.playerBusy.set(name, false);
+    }
   }
 
   /** 读播放器的当前状态（读不出来就当 unknown，走慢路径） */
