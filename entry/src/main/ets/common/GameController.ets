@@ -868,6 +868,10 @@ export class GameController {
     this.rippleSteps = steps;
     this.rippleStart = Date.now();
     this.rippleActive = true;
+    // **诊断日志**：涟漪的绝对起点。翻开的那一声就锚在这个时刻上，
+    // 跑测器拿它和 `[Sound] 对齐播放 ... at=` 相减，就能**量出**音画差多少毫秒
+    // （用户报的「音画不同步」就是这个差值；只断言「走了对齐那条路」是不够的）。
+    console.info('[Anim] 涟漪开始 at=' + this.rippleStart + ' 格数=' + steps.length);
     this.ensureFrameTimer();
     return this.rippleStart;
   }
