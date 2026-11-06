@@ -317,6 +317,24 @@ export struct MinefieldCanvas {
    *     双指变单指时必须把这次手势标记为「已移动」，否则抬手会被当成点击。
    */
   private handleTouch(event: TouchEvent): void {
+    // **按下的第一件事：打断发牌动画**（原版行为，见 GameController.interruptDealIn）。
+    //
+    // 放在最前面、并且**不管按在哪里**（棋盘、状态条、菜单栏）都算 ——
+    // 原版的 `speed()` 是拿 `PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)` 过滤的，
+    // 只看**消息类型**是不是 WM_LBUTTONDOWN / WM_RBUTTONDOWN，不看坐标；
+    // 而鼠标在窗口任何位置按下都产生这两条消息，所以「按哪都断」才是原版。
+    //
+    // 为什么必须在这里（Down）而不是在 tap()（Up）里：
+    // 原版是在**按下**的那一刻就断的（`//bug WM_LBUTTONDOWN停止动画`）。
+    // 放在 Up 的话，「按下 → 抬起」这段时间里发牌动画还在跑，
+    // 而且拖动/捏合根本不会走到 tap()，就会漏掉。
+    //
+    // 坑（2026-11-06 用户报「两个动画混杂了」）：
+    // 不打断的话，发牌动画（波浪弹起）和翻开涟漪（淡入）会同时跑，
+    // 画面上两种动画叠在一起。
+    if (event.type === TouchType.Down) {
+      this.controller.interruptDealIn();
+    }
     if (this.controller.inputLocked) {
       // 有对话框 / 统计窗口 / 自定义框开着时：**只让点击通过**，不做平移与捏合。
       // 注意不能在这里直接 return —— 那样连按钮都点不动了

@@ -797,6 +797,15 @@ export class SoundPlayer {
   }
 
   private static async playAsync(ctx: common.UIAbilityContext, name: string): Promise<void> {
+    // 取**调用这一刻**的代次：`stop(name)` 会把它 +1，
+    // 于是一个已经进了异步链、但还没真正 play() 的请求能自己作废。
+    //
+    // 坑（Codex 复审 2026-11-06 的 P2）：
+    // `stop()` 只撤定时器、只停当前播放器，**挡不住已经在 prepare() 里的请求** ——
+    // 于是「按下打断发牌动画之后，配乐才响起来」。
+    // `playAt()` 给的时间通常已经到点，请求会立刻进入异步链，
+    // 根本不在可撤销的定时器里，所以必须靠代次作废。
+    const gen: number = SoundPlayer.playGen.get(name) || 0;
     const player = await SoundPlayer.ensurePlayer(ctx, name);
     // **标记占用**：从拿到播放器到放完（状态切完）为止，
     // 这个播放器**不能被别人回收**（Codex 复审第 16 轮 P2，2026-11-05）。
@@ -805,11 +814,19 @@ export class SoundPlayer {
     // 于是它会被回收掉，随后原请求的 prepare/play 失败，**声音丢失**。
     SoundPlayer.playerBusy.set(name, true);
     try {
-      await SoundPlayer.playOn(player);
+      await SoundPlayer.playOn(player, SoundPlayer.playCancelCheck(name, gen));
     } finally {
       SoundPlayer.playerBusy.set(name, false);
     }
   }
+
+  /** 普通音效的取消判据：代次变了 = 这条播放请求作废 */
+  private static playCancelCheck(name: string, gen: number): () => boolean {
+    return () => (SoundPlayer.playGen.get(name) || 0) !== gen;
+  }
+
+  /** 普通音效的取消代次（`stop()` 时 +1，用来作废在途的播放请求） */
+  private static playGen: Map<string, number> = new Map();
 
   /** 读播放器的当前状态（读不出来就当 unknown，走慢路径） */
 
@@ -821,6 +838,9 @@ export class SoundPlayer {
    * 如果结束音响起时爆炸中音还在放，两个声音会叠在一起 —— 原版是先停循环再放结束音。
    */
   static stop(name: string): void {
+    // **作废在途的播放请求**（Codex 复审 2026-11-06 的 P2）：
+    // 已经进了 `prepare()` 的那条链拦不住，只能靠代次让它自己退出。
+    SoundPlayer.playGen.set(name, (SoundPlayer.playGen.get(name) || 0) + 1);
     // 待播的对齐播放也要撤：否则「已经排到 300ms 后响」的那一声
     // 会在 stop 之后照样响起来。
     const timer = SoundPlayer.alignedTimers.get(name);
@@ -858,6 +878,8 @@ export class SoundPlayer {
     SoundPlayer.poolBusy.clear();
     SoundPlayer.poolPending.clear();
     SoundPlayer.poolGeneration.clear();
+    SoundPlayer.playGen.clear();
+    SoundPlayer.playerBusy.clear();
     SoundPlayer.creatingCount = 0;
     SoundPlayer.creating.clear();
     SoundPlayer.warming.clear();

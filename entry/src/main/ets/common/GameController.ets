@@ -817,6 +817,47 @@ export class GameController {
     this.dealFlags = [];
   }
 
+  /**
+   * **打断发牌动画**（原版：按下滑鼠就打断）。
+   *
+   * 依据（Lmy 复刻 `Minesweeper.cpp:1843-1879` 的 `speed()`）：
+   *     //鼠标消息停止动画效果
+   *     if ((optionFlag & OF_DRAW) && (!PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)
+   *         || (msg.message != WM_LBUTTONDOWN && msg.message != WM_RBUTTONDOWN)))
+   *     { ... Sleep(dwMilliseconds); ... }
+   *     else
+   *     {
+   *         msgFlag = true;
+   *         PlaySound(NULL, NULL, SND_ASYNC);   // ← 连声音一起停
+   *     }
+   * —— 左键**或**右键**按下**都会命中 else 分支：
+   *   剩下的格子不再 Sleep（于是**瞬间全部画完**，不是冻结在半截），
+   *   并且把正在播的声音全停掉。
+   * 参考实现那段发牌循环上方还留着一句注释 `//bug  WM_LBUTTONDOWN停止动画`，
+   * 说的正是这个行为（在它看来是个 bug，但那是原版的真实表现）。
+   *
+   * 为什么我们**非做不可**（2026-11-06 用户报「两个动画混杂了」）：
+   * 原版的发牌是**阻塞式循环**里 `PeekMessage` 检查按键，所以「按下就断」是
+   * 循环自己做到的；我们是**非阻塞的帧定时器**，不显式打断的话，
+   * 发牌动画（`dealActive`）和翻开的涟漪（`rippleActive`）会**同时跑** ——
+   * 画面上就是「一半格子还在波浪展开、另一半已经在涟漪淡入」，两种动画叠在一起。
+   *
+   * @returns 真的打断了返回 true（本来没在跑返回 false）
+   */
+  interruptDealIn(): boolean {
+    if (!this.dealActive) {
+      return false;
+    }
+    const elapsed: number = Date.now() - this.dealStart;
+    this.stopDealIn();
+    // 声音一起停（原版 `PlaySound(NULL, NULL, SND_ASYNC)`）。
+    // 注意 `SoundPlayer.stop` 会把「已经排期但还没响」的对齐播放也撤掉 ——
+    // 否则发牌音会在按下之后才响起来。
+    SoundPlayer.stop(Sound.FIRST_PAINT);
+    console.info('[DealIn] 发牌动画被打断 elapsed=' + elapsed + '（按下鼠标，原版行为）');
+    return true;
+  }
+
   /** 推进发牌动画，返回 true 表示还在进行 */
   private tickDealIn(): boolean {
     if (!this.dealActive) {

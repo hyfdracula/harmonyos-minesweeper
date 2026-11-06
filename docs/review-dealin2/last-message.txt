@@ -1,0 +1,1 @@
+No actionable regressions were identified in the diff. The frame timer redraws the completed board after interruption, and focused mock-AVPlayer checks passed for cancellation during creation and preparation, replay after cancellation, and stopping active playback. Full HarmonyOS build and device behavior were not verified.
