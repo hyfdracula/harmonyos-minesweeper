@@ -14,5 +14,5 @@ build-profile.json5
 
 # Codex 复审的原始输出（events.jsonl 很大，是分析过程不是源码；
 # 结论已经写进另一个仓的 docs/CODEX-REVIEW-LOG.md）
-docs/review-sound*/
+docs/review-*/
 
